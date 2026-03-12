@@ -1,23 +1,18 @@
 """
-Energy Audit Analyzer
+Energy Audit Analyzer v2.1
 Professional energy consumption analysis tool for auditors.
 
-Features:
-- Meter data analysis with anomaly detection
-- AMI (interval) data analysis with load profiles
-- Weather-normalized consumption analysis
-- Advanced fractal analysis (Hurst exponent)
-- PDF report export
+Based on the GRU Energy Audit Colab notebook - properly cleaned data,
+move-in lines, meter change bands, rolling averages, temperature correlation.
 
 Author: Energy Audit Tools
-Version: 2.0
 """
 
 import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
+import matplotlib.patches as mpatches
 from matplotlib.backends.backend_pdf import PdfPages
 from scipy import stats
 from sklearn.ensemble import IsolationForest
@@ -30,30 +25,33 @@ from datetime import datetime, timedelta
 warnings.filterwarnings('ignore')
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# CONFIGURATION
+# PAGE CONFIG
 # ═══════════════════════════════════════════════════════════════════════════════
 
 st.set_page_config(
     page_title="Energy Audit Analyzer",
-    page_icon="⚡",
+    page_icon="E",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
 # Professional color palette
 COLORS = {
-    "primary": "#1e3a5f",      # Dark blue
-    "secondary": "#3498db",    # Light blue
-    "accent": "#e67e22",       # Orange
-    "success": "#27ae60",      # Green
-    "warning": "#f39c12",      # Yellow
-    "danger": "#c0392b",       # Red
-    "neutral": "#7f8c8d",      # Gray
-    "light": "#ecf0f1",        # Light gray
-    "dark": "#2c3e50",         # Dark gray
+    "primary": "#1e3a5f",
+    "secondary": "#3498db",
+    "accent": "#e67e22",
+    "success": "#27ae60",
+    "warning": "#f39c12",
+    "danger": "#c0392b",
+    "neutral": "#7f8c8d",
+    "steelblue": "steelblue",
+    "crimson": "crimson",
+    "goldenrod": "goldenrod",
+    "dodgerblue": "dodgerblue",
+    "darkorange": "darkorange",
 }
 
-# Chart style configuration
+# Chart style
 plt.style.use('seaborn-v0_8-whitegrid')
 plt.rcParams.update({
     'font.family': 'sans-serif',
@@ -70,100 +68,24 @@ plt.rcParams.update({
     'grid.alpha': 0.5,
 })
 
-# Custom CSS for light professional theme
+# Custom CSS
 st.markdown("""
 <style>
-    /* Main background */
-    .stApp {
-        background-color: #f8f9fa;
-    }
-    
-    /* Sidebar */
-    [data-testid="stSidebar"] {
-        background-color: #ffffff;
-        border-right: 1px solid #e0e0e0;
-    }
-    
-    /* Headers */
-    h1, h2, h3 {
-        color: #1e3a5f;
-    }
-    
-    /* Cards */
-    .metric-card {
-        background-color: #ffffff;
-        border: 1px solid #e0e0e0;
-        border-radius: 8px;
-        padding: 20px;
-        margin: 10px 0;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-    }
-    
-    /* Info boxes */
-    .info-box {
-        background-color: #e8f4fd;
-        border-left: 4px solid #3498db;
-        padding: 15px;
-        margin: 15px 0;
-        border-radius: 0 8px 8px 0;
-    }
-    
-    .warning-box {
-        background-color: #fef9e7;
-        border-left: 4px solid #f39c12;
-        padding: 15px;
-        margin: 15px 0;
-        border-radius: 0 8px 8px 0;
-    }
-    
-    .success-box {
-        background-color: #eafaf1;
-        border-left: 4px solid #27ae60;
-        padding: 15px;
-        margin: 15px 0;
-        border-radius: 0 8px 8px 0;
-    }
-    
-    .danger-box {
-        background-color: #fdedec;
-        border-left: 4px solid #c0392b;
-        padding: 15px;
-        margin: 15px 0;
-        border-radius: 0 8px 8px 0;
-    }
-    
-    /* Section headers */
-    .section-header {
-        background-color: #1e3a5f;
-        color: white;
-        padding: 10px 20px;
-        border-radius: 8px;
-        margin: 20px 0 15px 0;
-    }
-    
-    /* Tables */
-    .dataframe {
-        font-size: 12px;
-    }
-    
-    /* Hide streamlit branding */
+    .stApp { background-color: #f8f9fa; }
+    [data-testid="stSidebar"] { background-color: #ffffff; border-right: 1px solid #e0e0e0; }
+    h1, h2, h3 { color: #1e3a5f; }
+    .info-box { background-color: #e8f4fd; border-left: 4px solid #3498db; padding: 15px; margin: 15px 0; border-radius: 0 8px 8px 0; }
+    .warning-box { background-color: #fef9e7; border-left: 4px solid #f39c12; padding: 15px; margin: 15px 0; border-radius: 0 8px 8px 0; }
+    .success-box { background-color: #eafaf1; border-left: 4px solid #27ae60; padding: 15px; margin: 15px 0; border-radius: 0 8px 8px 0; }
+    .danger-box { background-color: #fdedec; border-left: 4px solid #c0392b; padding: 15px; margin: 15px 0; border-radius: 0 8px 8px 0; }
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# UTILITY FUNCTIONS
-# ═══════════════════════════════════════════════════════════════════════════════
-
 def info_box(text, box_type="info"):
-    """Display styled info box."""
     st.markdown(f'<div class="{box_type}-box">{text}</div>', unsafe_allow_html=True)
-
-def section_header(text):
-    """Display section header."""
-    st.markdown(f'<div class="section-header"><strong>{text}</strong></div>', unsafe_allow_html=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -179,10 +101,10 @@ def get_master_sheet_info(file_obj):
             try:
                 val = ms.iloc[row, col]
                 return str(val).strip() if pd.notna(val) else None
-            except Exception:
+            except:
                 return None
         
-        # Auto-detect row offset
+        # Auto-detect row offset (if cell 0,6 has no digits, it's a title row)
         row_offset = 0
         cell_0_6 = safe_get(0, 6)
         if cell_0_6 and not any(c.isdigit() for c in str(cell_0_6)):
@@ -200,15 +122,12 @@ def get_master_sheet_info(file_obj):
             "city_town": get(5, 6),
             "gru_rep": get(6, 2),
             "survey_date": get(7, 2),
-            "survey_time": get(8, 2),
-            "results_sent_to": get(9, 2),
         }
         
-        # Clean survey date
         if info["survey_date"] and "00:00:00" in str(info["survey_date"]):
             try:
                 info["survey_date"] = pd.to_datetime(info["survey_date"]).strftime("%m/%d/%Y")
-            except Exception:
+            except:
                 pass
         
         return info
@@ -217,200 +136,97 @@ def get_master_sheet_info(file_obj):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# METER LOADER
+# METER LOADER - Exact copy from Colab with proper data cleaning
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class MeterLoader:
-    """
-    Load and clean meter consumption data.
-    
-    Expected Format:
-    - Excel file with "Consumption" sheet (or sheet containing "consumption" in name)
-    - Required columns: Division, MR Date, Days, Consumption
-    - Optional columns: MR Reason, MR Type, MR Unit, Avg (daily average)
-    """
+    """Load and clean meter consumption data - matches Colab logic exactly."""
     
     COLUMN_MAP = {
-        "Division": "division", "division": "division",
-        "Device": "device", "device": "device",
-        "MR Reason": "mr_reason", "mr reason": "mr_reason", "Reason": "mr_reason",
-        "MR Type": "mr_type", "mr type": "mr_type", "Type": "mr_type",
-        "MR Date": "mr_date", "mr date": "mr_date", "Date": "mr_date", "Read Date": "mr_date",
-        "Days": "days", "days": "days", "Billing Days": "days",
-        "MR Result": "mr_result", "mr result": "mr_result",
-        "MR Unit": "mr_unit", "mr unit": "mr_unit", "Unit": "mr_unit",
-        "Consumption": "consumption", "consumption": "consumption", "Usage": "consumption",
-        "Avg.": "avg_daily", "Avg": "avg_daily", "avg": "avg_daily", "Daily Avg": "avg_daily",
+        "Division": "division", "Device": "device", "MR Reason": "mr_reason",
+        "MR Type": "mr_type", "MR Date": "mr_date", "Days": "days",
+        "MR Result": "mr_result", "MR Unit": "mr_unit", "Consumption": "consumption",
+        "Avg.": "avg_daily", "Avg": "avg_daily",
     }
     
     NON_READ_REASONS = {3}
+    VLINE_REASONS = {6, 21, 22}  # Move-In, Meter Removal, Meter Install
     NON_READ_TYPES = {"automatic estimation"}
     
     def __init__(self, file_obj):
         self.file_obj = file_obj
         self.df = None
         self.has_mr_reason = False
-        self.debug_info = {}
     
     def _find_sheet(self, xl):
-        """Find the consumption data sheet."""
-        self.debug_info["available_sheets"] = xl.sheet_names
-        
-        # Priority order for sheet selection
         for name in xl.sheet_names:
-            name_lower = name.lower()
-            if "consumption" in name_lower:
+            if "consumption" in name.lower():
                 return name
-        
-        # Fallback: look for sheets with data
-        for name in xl.sheet_names:
-            name_lower = name.lower()
-            if name_lower not in ["master sheet", "info", "summary", "notes"]:
-                # Check if sheet has data
-                try:
-                    test_df = pd.read_excel(xl, sheet_name=name, nrows=5)
-                    if len(test_df.columns) >= 3:
-                        return name
-                except:
-                    continue
-        
-        raise ValueError(
-            f"No consumption sheet found.\n"
-            f"Available sheets: {xl.sheet_names}\n"
-            f"Expected: Sheet named 'Consumption' or containing 'consumption' in name."
-        )
+        raise ValueError(f"No consumption sheet found. Sheets: {xl.sheet_names}")
     
     def _find_header_row(self, xl, sheet):
-        """
-        Find the header row containing column names.
-        Returns the row index where headers are found.
-        """
-        # Read first 10 rows to find headers
-        preview = pd.read_excel(xl, sheet_name=sheet, header=None, nrows=10)
-        
-        for i in range(min(10, len(preview))):
-            row_values = [str(x).strip() for x in preview.iloc[i].values if pd.notna(x)]
-            row_str = " ".join(row_values).lower()
-            
-            # Check for key column names
-            if "division" in row_str or ("date" in row_str and "consumption" in row_str):
-                self.debug_info["header_row"] = i
+        for i in range(5):
+            df = pd.read_excel(xl, sheet_name=sheet, header=i, nrows=1)
+            df.columns = df.columns.str.strip()
+            if "Division" in df.columns:
                 return i
-        
-        # Fallback: assume first row
-        self.debug_info["header_row"] = 0
         return 0
     
     def load_and_clean(self):
-        """Load and clean meter data with robust error handling."""
-        try:
-            xl = pd.ExcelFile(self.file_obj)
-            sheet = self._find_sheet(xl)
-            self.debug_info["selected_sheet"] = sheet
-            
-            header_row = self._find_header_row(xl, sheet)
-            
-            df = pd.read_excel(xl, sheet_name=sheet, header=header_row)
-            df.columns = [str(c).strip() for c in df.columns]
-            self.debug_info["original_columns"] = df.columns.tolist()
-            
-            # Map columns
-            rename_map = {}
-            for orig_col in df.columns:
-                col_clean = orig_col.strip()
-                if col_clean in self.COLUMN_MAP:
-                    rename_map[orig_col] = self.COLUMN_MAP[col_clean]
-            
-            df.rename(columns=rename_map, inplace=True)
-            self.debug_info["mapped_columns"] = df.columns.tolist()
-            
-            # Validate required columns
-            required = ["mr_date", "consumption"]
-            missing = [c for c in required if c not in df.columns]
-            
-            if missing:
-                # Try to find alternative column names
-                suggestions = []
-                for col in df.columns:
-                    col_lower = col.lower()
-                    if "date" in col_lower:
-                        suggestions.append(f"'{col}' might be the date column")
-                    if any(kw in col_lower for kw in ["usage", "kwh", "consumption", "reading"]):
-                        suggestions.append(f"'{col}' might be the consumption column")
-                
-                raise ValueError(
-                    f"Missing required columns: {missing}\n"
-                    f"Columns found: {df.columns.tolist()}\n"
-                    f"Suggestions:\n" + "\n".join(f"  - {s}" for s in suggestions) if suggestions else ""
-                )
-            
-            # Parse dates
-            if "mr_date" in df.columns:
-                df["mr_date"] = pd.to_datetime(df["mr_date"], errors="coerce")
-                invalid_dates = df["mr_date"].isna().sum()
-                if invalid_dates > 0:
-                    self.debug_info["invalid_dates"] = invalid_dates
-            
-            # Parse numeric columns
-            for col in ["days", "consumption", "avg_daily"]:
-                if col in df.columns:
-                    df[col] = pd.to_numeric(df[col], errors="coerce")
-            
-            # Check for mr_reason column
-            self.has_mr_reason = "mr_reason" in df.columns
-            
-            # Filter out non-reads
-            original_count = len(df)
-            
-            if self.has_mr_reason:
-                df = df[~df["mr_reason"].isin(self.NON_READ_REASONS)]
-            
+        xl = pd.ExcelFile(self.file_obj)
+        sheet = self._find_sheet(xl)
+        header_row = self._find_header_row(xl, sheet)
+        
+        df = pd.read_excel(xl, sheet_name=sheet, header=header_row)
+        df.columns = df.columns.str.strip()
+        df = df.rename(columns=self.COLUMN_MAP)
+        
+        self.has_mr_reason = "mr_reason" in df.columns
+        
+        df["mr_date"] = pd.to_datetime(df["mr_date"], errors="coerce")
+        
+        if "consumption" in df.columns:
+            if df["consumption"].dtype == object:
+                df["consumption"] = df["consumption"].astype(str).str.replace(",", "", regex=False)
+            df["consumption"] = pd.to_numeric(df["consumption"], errors="coerce")
+        
+        for col in ["mr_result", "days", "avg_daily"]:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+        
+        df = df.dropna(subset=["mr_date"])
+        
+        # KEY CLEANING LOGIC FROM COLAB:
+        if self.has_mr_reason:
+            df["mr_reason"] = pd.to_numeric(df["mr_reason"], errors="coerce")
+            # Remove non-reads (reason 3)
+            df = df[~df["mr_reason"].isin(self.NON_READ_REASONS)]
+            # Keep consumption > 0 OR vline reasons (Move-In, Meter Changes)
+            df = df[(df["consumption"] > 0) | (df["mr_reason"].isin(self.VLINE_REASONS))]
+        else:
             if "mr_type" in df.columns:
-                df["mr_type_lower"] = df["mr_type"].astype(str).str.lower()
-                df = df[~df["mr_type_lower"].isin(self.NON_READ_TYPES)]
-                df = df.drop(columns=["mr_type_lower"])
-            
-            # Drop rows with missing essential data
-            df = df.dropna(subset=["mr_date", "consumption"])
-            
-            self.debug_info["rows_before_filter"] = original_count
-            self.debug_info["rows_after_filter"] = len(df)
-            
-            if len(df) == 0:
-                raise ValueError(
-                    f"No valid data rows after cleaning.\n"
-                    f"Original rows: {original_count}\n"
-                    f"Check that 'MR Date' and 'Consumption' columns have valid data."
-                )
-            
-            self.df = df.reset_index(drop=True)
-            return self.df
-            
-        except Exception as e:
-            if "Missing required columns" in str(e) or "No consumption sheet" in str(e):
-                raise
-            
-            debug_str = "\n".join([f"  {k}: {v}" for k, v in self.debug_info.items()])
-            raise ValueError(
-                f"Meter Load Error: {str(e)}\n\n"
-                f"Debug Info:\n{debug_str}\n\n"
-                f"Expected format:\n"
-                f"  - Excel file with 'Consumption' sheet\n"
-                f"  - Required columns: Division, MR Date, Days, Consumption\n"
-                f"  - Optional: Master Sheet with customer info"
-            )
+                df = df[~df["mr_type"].str.strip().str.lower().isin(self.NON_READ_TYPES)]
+            df = df[df["consumption"] > 0]
+        
+        # CRITICAL: Filter out zero-day periods
+        df = df[df["days"] > 0]
+        
+        df = df.sort_values(["division", "device", "mr_date"]).reset_index(drop=True)
+        self.df = df
+        return df
     
-    def get_division(self, division):
-        """Get data for a specific division (Electricity, Water, Gas)."""
+    def get_division(self, name):
+        """Get division data, SKIPPING THE FIRST READ (cumulative before metering)."""
         if self.df is None:
             return pd.DataFrame()
         
-        if "division" not in self.df.columns:
-            # If no division column, return all data
-            return self.df.copy()
+        sub = self.df[self.df["division"] == name].copy()
         
-        mask = self.df["division"].str.lower().str.contains(division.lower(), na=False)
-        return self.df[mask].copy()
+        if not sub.empty:
+            # CRITICAL: Skip first reading - it's the cumulative before metering started
+            sub = sub[sub["mr_date"] > sub["mr_date"].min()].reset_index(drop=True)
+        
+        return sub
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -418,7 +234,7 @@ class MeterLoader:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class MeterFeatures:
-    """Compute features from meter data."""
+    """Compute features from meter data - matches Colab logic."""
     
     def __init__(self, df):
         self.df = df.copy().sort_values("mr_date").reset_index(drop=True)
@@ -432,8 +248,10 @@ class MeterFeatures:
         overall_daily_avg = total_consumption / total_days if total_days > 0 else None
         peak_consumption = df["consumption"].max()
         base_consumption = df["consumption"].quantile(0.05)
+        
         period_series = df.set_index("mr_date")["consumption"]
         rolling_avg = period_series.rolling(window=3, min_periods=1).mean()
+        daily_avg_series = df.set_index("mr_date")["avg_daily"] if "avg_daily" in df.columns else None
         
         # Isolation Forest anomaly detection
         iso_cols = [c for c in ["consumption", "days", "avg_daily"] if c in df.columns]
@@ -448,63 +266,191 @@ class MeterFeatures:
         unit = df["mr_unit"].iloc[0] if "mr_unit" in df.columns else ""
         
         # Data quality score
-        quality_score = self._compute_quality_score(df)
+        score = 100
+        if df["consumption"].isna().any():
+            score -= 10
+        if "days" in df.columns and df["days"].std() > 10:
+            score -= 5
+        if len(df) < 12:
+            score -= (12 - len(df)) * 2
+        quality_score = max(0, min(100, score))
         
         return {
             "avg_read_interval": avg_read_interval,
             "total_consumption": total_consumption,
-            "total_days": total_days,
             "overall_daily_avg": overall_daily_avg,
             "peak_consumption": peak_consumption,
             "base_consumption": base_consumption,
             "period_series": period_series,
             "rolling_avg": rolling_avg,
+            "daily_avg_series": daily_avg_series,
+            "df_with_anomalies": df,
             "n_anomalies": n_anomalies,
             "unit": unit,
             "quality_score": quality_score,
-            "df_with_anomalies": df,
         }
-    
-    def _compute_quality_score(self, df):
-        score = 100
-        
-        # Missing values penalty
-        missing_pct = df.isnull().mean().mean() * 100
-        score -= min(missing_pct * 2, 20)
-        
-        # Irregular intervals penalty
-        if "days" in df.columns:
-            days_std = df["days"].std()
-            if days_std > 10:
-                score -= min(days_std, 20)
-        
-        # Too few readings penalty
-        if len(df) < 12:
-            score -= (12 - len(df)) * 2
-        
-        return max(0, min(100, round(score)))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# AMI LOADER
+# METER GRAPHS - With Move-In lines and Meter Change bands
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class MeterGraphs:
+    """Generate meter charts with event markers - matches Colab."""
+    
+    def __init__(self, feats, title_prefix="", has_mr_reason=True):
+        self.feats = feats
+        self.prefix = title_prefix
+        self.df = feats["df_with_anomalies"]
+        self.has_mr_reason = has_mr_reason
+    
+    def _get_meter_changes(self):
+        """Find consecutive 21+22 pairs for meter change bands."""
+        if "mr_reason" not in self.df.columns:
+            return []
+        
+        df = self.df.sort_values("mr_date")
+        changes = []
+        reasons = df["mr_reason"].tolist()
+        dates = df["mr_date"].tolist()
+        
+        i = 0
+        while i < len(reasons):
+            if reasons[i] == 22:
+                for j in range(i + 1, min(i + 4, len(reasons))):
+                    if reasons[j] == 21:
+                        changes.append((dates[i], dates[j]))
+                        i = j + 1
+                        break
+                else:
+                    changes.append((dates[i], dates[i]))
+                    i += 1
+            elif reasons[i] == 21:
+                found = False
+                for j in range(i - 1, max(i - 4, -1), -1):
+                    if reasons[j] == 22:
+                        found = True
+                        break
+                if not found:
+                    changes.append((dates[i], dates[i]))
+                i += 1
+            else:
+                i += 1
+        return changes
+    
+    def _add_markers(self, ax):
+        """Draw move-in vlines and meter change bands."""
+        if "mr_reason" not in self.df.columns:
+            return
+        
+        df = self.df
+        
+        # Move-in lines (reason 6)
+        move_ins = df[df["mr_reason"] == 6]
+        first_movein = True
+        for _, row in move_ins.iterrows():
+            lbl = "Move-In" if first_movein else "_nolegend_"
+            ax.axvline(x=row["mr_date"], color="dodgerblue",
+                      linewidth=1.8, linestyle="--", alpha=0.9, label=lbl)
+            first_movein = False
+        
+        # Meter change bands (21 + 22 pairs)
+        changes = self._get_meter_changes()
+        first_change = True
+        for date_start, date_end in changes:
+            lbl = "Meter Change" if first_change else "_nolegend_"
+            if date_start == date_end:
+                ax.axvline(x=date_start, color="darkorange",
+                          linewidth=1.8, linestyle="--", alpha=0.9, label=lbl)
+            else:
+                ax.axvspan(date_start, date_end,
+                          color="darkorange", alpha=0.18, label=lbl)
+                ax.axvline(x=date_start, color="darkorange",
+                          linewidth=1.2, linestyle="--", alpha=0.6)
+                ax.axvline(x=date_end, color="darkorange",
+                          linewidth=1.2, linestyle="--", alpha=0.6)
+            first_change = False
+    
+    def plot_consumption(self):
+        """Consumption bar chart with event markers."""
+        df_plot = self.df[self.df["consumption"] > 0]
+        s = df_plot.set_index("mr_date")["consumption"]
+        
+        fig, ax = plt.subplots(figsize=(13, 4))
+        ax.bar(s.index, s.values, width=20, color="steelblue", alpha=0.85, label="Consumption")
+        self._add_markers(ax)
+        ax.set_title(f"{self.prefix} - Consumption per Read Period")
+        ax.set_ylabel(self.feats["unit"])
+        ax.legend()
+        fig.autofmt_xdate()
+        plt.tight_layout()
+        return fig
+    
+    def plot_daily_average(self):
+        """Daily average line chart with event markers."""
+        s = self.feats["daily_avg_series"]
+        if s is None:
+            return None
+        
+        s = s[s > 0]
+        
+        fig, ax = plt.subplots(figsize=(13, 4))
+        ax.plot(s.index, s.values, color="goldenrod", linewidth=2,
+               marker="o", markersize=4, label="Daily Avg")
+        self._add_markers(ax)
+        ax.set_title(f"{self.prefix} - Average Daily Usage per Period")
+        ax.set_ylabel(f"{self.feats['unit']}/day")
+        ax.legend()
+        fig.autofmt_xdate()
+        plt.tight_layout()
+        return fig
+    
+    def plot_rolling_average(self):
+        """Consumption with 3-period rolling average."""
+        df_plot = self.df[self.df["consumption"] > 0]
+        s = df_plot.set_index("mr_date")["consumption"]
+        r = s.rolling(window=3, min_periods=1).mean()
+        
+        fig, ax = plt.subplots(figsize=(13, 4))
+        ax.plot(s.index, s.values, color="steelblue", alpha=0.4,
+               linewidth=1.5, label="Consumption")
+        ax.plot(r.index, r.values, color="crimson",
+               linewidth=2.5, label="3-Read Rolling Avg")
+        self._add_markers(ax)
+        ax.set_title(f"{self.prefix} - Consumption Trend")
+        ax.set_ylabel(self.feats["unit"])
+        ax.legend()
+        fig.autofmt_xdate()
+        plt.tight_layout()
+        return fig
+    
+    def plot_anomalies(self):
+        """Anomaly detection chart with event markers."""
+        df = self.df[self.df["consumption"] > 0]
+        normal = df[~df["anomaly"]]
+        anomaly = df[df["anomaly"]]
+        
+        fig, ax = plt.subplots(figsize=(13, 4))
+        ax.bar(normal["mr_date"], normal["consumption"],
+              width=20, color="steelblue", alpha=0.85, label="Normal")
+        ax.bar(anomaly["mr_date"], anomaly["consumption"],
+              width=20, color="crimson", alpha=0.9, label="Anomaly")
+        self._add_markers(ax)
+        ax.set_title(f"{self.prefix} - Anomaly Detection")
+        ax.set_ylabel(self.feats["unit"])
+        ax.legend()
+        fig.autofmt_xdate()
+        plt.tight_layout()
+        return fig
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# AMI LOADER - Robust multi-format support
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class AMILoader:
-    """
-    Load AMI interval data with auto-format detection.
+    """Load AMI interval data with auto-format detection."""
     
-    Supported Formats:
-    - Format A: Combined timestamp "Jan 15, 2025 - 2:30 PM EST" (values in Wh, divide by 1000)
-    - Format B: Combined timestamp "01/12/2026 00:15 EST" (values in kWh)
-    - Format C: Separate Date/Time columns with 12-hour time "12:00 am" (values as-is)
-    - Format D: Simple datetime column with numeric values
-    """
-    
-    SHEET_MAP = {
-        "ELECTRIC": "Electric", "Electric": "Electric",
-        "WATER": "Water", "Water": "Water", 
-        "GAS": "Gas", "Gas": "Gas",
-    }
     UNITS = {"Electric": "kWh", "Water": "Gal", "Gas": "CCF"}
     
     def __init__(self, file_obj):
@@ -513,13 +459,9 @@ class AMILoader:
         self.util_type = None
         self.unit = None
         self.format_detected = None
-        self.debug_info = {}
     
     def _detect_utility_type(self, xl, filename=""):
-        """Detect utility type from sheet names or filename."""
         filename_lower = str(filename).lower()
-        
-        # Check filename first
         if "water" in filename_lower:
             return "Water"
         elif "gas" in filename_lower:
@@ -527,60 +469,54 @@ class AMILoader:
         elif "electric" in filename_lower:
             return "Electric"
         
-        # Check sheet names
         for name in xl.sheet_names:
-            name_upper = name.upper()
-            if "WATER" in name_upper:
+            if "WATER" in name.upper():
                 return "Water"
-            elif "GAS" in name_upper:
+            elif "GAS" in name.upper():
                 return "Gas"
-            elif "ELECTRIC" in name_upper:
+            elif "ELECTRIC" in name.upper():
                 return "Electric"
         
-        return "Electric"  # Default
+        return "Electric"
     
-    def _find_header_row(self, preview):
-        """Find the header row by looking for date/time keywords."""
+    def load(self):
+        filename = getattr(self.file_obj, 'name', '')
+        xl = pd.ExcelFile(self.file_obj)
+        sheet = xl.sheet_names[0]
+        
+        self.util_type = self._detect_utility_type(xl, filename)
+        self.unit = self.UNITS.get(self.util_type, "kWh")
+        
+        # Read preview to find header
+        preview = pd.read_excel(xl, sheet_name=sheet, header=None, nrows=15)
+        
+        header_row = 0
         for i in range(min(10, len(preview))):
             row_values = [str(x).lower().strip() for x in preview.iloc[i].values if pd.notna(x)]
             row_str = " ".join(row_values)
-            
-            # Check for header keywords
-            if any(kw in row_str for kw in ["date", "time", "timestamp", "datetime"]):
-                return i
+            if any(kw in row_str for kw in ["date", "time", "timestamp"]):
+                header_row = i
+                break
         
-        return 0  # Default to first row
-    
-    def _identify_columns(self, df):
-        """
-        Identify date, time, and value columns.
-        Returns: (date_col, time_col, value_col, format_type)
-        """
-        cols_lower = {c: c.lower().strip() for c in df.columns}
+        df = pd.read_excel(xl, sheet_name=sheet, header=header_row)
+        df.columns = [str(c).strip() for c in df.columns]
         
-        date_col = None
-        time_col = None
-        value_col = None
+        # Identify columns
+        date_col, time_col, value_col = None, None, None
         
-        for col, col_lower in cols_lower.items():
-            # Date column
-            if col_lower in ["date", "datetime", "date/time", "reading date"]:
+        for col in df.columns:
+            col_lower = col.lower()
+            if col_lower in ["date", "datetime", "date/time"]:
                 date_col = col
-            # Time column (separate)
-            elif col_lower in ["time", "reading time"]:
+            elif col_lower in ["time"]:
                 time_col = col
-            # Combined timestamp
-            elif "date" in col_lower and "time" in col_lower:
-                date_col = col
-            # Value columns
-            elif col_lower in ["kwh", "kw", "value", "reading", "consumption", "usage", "gal", "gallons", "ccf"]:
+            elif col_lower in ["kwh", "value", "reading", "consumption", "usage", "gal", "ccf"]:
                 value_col = col
         
-        # If no value column found, look for numeric column
+        # Find value column if not found
         if value_col is None:
             for col in df.columns:
                 if col not in [date_col, time_col]:
-                    # Check if column has numeric data
                     try:
                         numeric_vals = pd.to_numeric(df[col], errors='coerce')
                         if numeric_vals.notna().sum() > len(df) * 0.5:
@@ -589,216 +525,74 @@ class AMILoader:
                     except:
                         continue
         
-        # Determine format type
-        if date_col and time_col:
-            format_type = "separate_datetime"
-        elif date_col:
-            format_type = "combined_datetime"
-        else:
-            format_type = "unknown"
+        if date_col is None or value_col is None:
+            raise ValueError(f"Could not identify columns. Found: {df.columns.tolist()}")
         
-        return date_col, time_col, value_col, format_type
-    
-    def _parse_separate_datetime(self, df, date_col, time_col):
-        """Parse separate date and time columns (Format C)."""
-        timestamps = []
-        
-        for _, row in df.iterrows():
-            try:
-                date_val = row[date_col]
-                time_val = str(row[time_col]).strip()
-                
-                # Handle date
-                if isinstance(date_val, pd.Timestamp):
-                    date_str = date_val.strftime("%Y-%m-%d")
-                else:
-                    date_str = pd.to_datetime(date_val).strftime("%Y-%m-%d")
-                
-                # Handle time (12-hour format with am/pm)
-                time_clean = time_val.strip()
-                
-                # Parse 12-hour time
+        # Parse timestamps
+        if time_col:
+            # Format C: Separate Date and Time columns
+            self.format_detected = "C"
+            timestamps = []
+            for _, row in df.iterrows():
                 try:
-                    time_obj = pd.to_datetime(time_clean, format="%I:%M %p")
-                    time_str = time_obj.strftime("%H:%M")
-                except:
+                    date_val = row[date_col]
+                    time_val = str(row[time_col]).strip()
+                    
+                    if isinstance(date_val, pd.Timestamp):
+                        date_str = date_val.strftime("%Y-%m-%d")
+                    else:
+                        date_str = pd.to_datetime(date_val).strftime("%Y-%m-%d")
+                    
                     try:
-                        time_obj = pd.to_datetime(time_clean, format="%I:%M%p")
+                        time_obj = pd.to_datetime(time_val, format="%I:%M %p")
                         time_str = time_obj.strftime("%H:%M")
                     except:
-                        # Try 24-hour format
                         try:
-                            time_obj = pd.to_datetime(time_clean, format="%H:%M")
+                            time_obj = pd.to_datetime(time_val, format="%H:%M")
                             time_str = time_obj.strftime("%H:%M")
                         except:
                             time_str = "00:00"
-                
-                full_ts = pd.to_datetime(f"{date_str} {time_str}")
-                timestamps.append(full_ts)
-            except Exception as e:
-                timestamps.append(pd.NaT)
-        
-        return pd.Series(timestamps)
-    
-    def _parse_combined_datetime(self, df, ts_col):
-        """Parse combined datetime column (Format A, B, D)."""
-        first_val = str(df[ts_col].iloc[0]).strip()
-        
-        # Remove timezone suffixes
-        def clean_tz(x):
-            s = str(x).strip()
-            for tz in [" EST", " EDT", " CST", " CDT", " PST", " PDT"]:
-                s = s.replace(tz, "")
-            return s.strip()
-        
-        # Detect format
-        if " - " in first_val:
-            # Format A: "Jan 15, 2025 - 2:30 PM EST"
-            self.format_detected = "A"
-            self.debug_info["multiplier"] = 0.001
-            
-            def parse_a(x):
-                try:
-                    s = clean_tz(x).replace(" - ", " ")
-                    return pd.to_datetime(s)
+                    
+                    timestamps.append(pd.to_datetime(f"{date_str} {time_str}"))
                 except:
-                    return pd.NaT
+                    timestamps.append(pd.NaT)
             
-            return df[ts_col].apply(parse_a), 0.001
-        
-        elif "/" in first_val and len(first_val.split()) >= 2:
-            # Format B: "01/12/2026 00:15 EST"
-            self.format_detected = "B"
-            self.debug_info["multiplier"] = 1.0
-            
-            def parse_b(x):
-                try:
-                    s = clean_tz(x)
-                    return pd.to_datetime(s, format="%m/%d/%Y %H:%M")
-                except:
-                    try:
-                        return pd.to_datetime(s)
-                    except:
-                        return pd.NaT
-            
-            return df[ts_col].apply(parse_b), 1.0
-        
-        else:
-            # Format D: General datetime
-            self.format_detected = "D"
-            self.debug_info["multiplier"] = 1.0
-            
-            return pd.to_datetime(df[ts_col], errors="coerce"), 1.0
-    
-    def load(self):
-        """Load and parse AMI data with auto-format detection."""
-        try:
-            # Get filename for utility detection
-            filename = getattr(self.file_obj, 'name', '')
-            
-            xl = pd.ExcelFile(self.file_obj)
-            self.debug_info["sheets"] = xl.sheet_names
-            
-            # Select sheet
-            sheet = xl.sheet_names[0]
-            for name in xl.sheet_names:
-                if name.upper() in ["ELECTRIC", "WATER", "GAS"]:
-                    sheet = name
-                    break
-            
-            self.debug_info["selected_sheet"] = sheet
-            
-            # Detect utility type
-            self.util_type = self._detect_utility_type(xl, filename)
-            self.unit = self.UNITS.get(self.util_type, "kWh")
-            self.debug_info["util_type"] = self.util_type
-            
-            # Read preview to find header
-            preview = pd.read_excel(xl, sheet_name=sheet, header=None, nrows=15)
-            header_row = self._find_header_row(preview)
-            self.debug_info["header_row"] = header_row
-            
-            # Read data
-            df = pd.read_excel(xl, sheet_name=sheet, header=header_row)
-            df.columns = [str(c).strip() for c in df.columns]
-            self.debug_info["columns"] = df.columns.tolist()
-            self.debug_info["row_count"] = len(df)
-            
-            if len(df) == 0:
-                raise ValueError(
-                    f"No data found after header row {header_row}.\n"
-                    f"Columns detected: {df.columns.tolist()}\n"
-                    f"Please check that data starts after row {header_row + 1} in Excel."
-                )
-            
-            # Identify columns
-            date_col, time_col, value_col, format_type = self._identify_columns(df)
-            self.debug_info["date_col"] = date_col
-            self.debug_info["time_col"] = time_col
-            self.debug_info["value_col"] = value_col
-            self.debug_info["format_type"] = format_type
-            
-            if date_col is None:
-                raise ValueError(
-                    f"Could not find date/time column.\n"
-                    f"Columns found: {df.columns.tolist()}\n"
-                    f"Expected: 'Date', 'Time', 'DateTime', or similar.\n"
-                    f"First row sample: {df.iloc[0].tolist() if len(df) > 0 else 'N/A'}"
-                )
-            
-            if value_col is None:
-                raise ValueError(
-                    f"Could not find value column.\n"
-                    f"Columns found: {df.columns.tolist()}\n"
-                    f"Expected: 'kWh', 'Value', 'Consumption', 'Reading', or numeric column."
-                )
-            
-            # Parse timestamps based on format
+            df["timestamp"] = timestamps
             multiplier = 1.0
+        else:
+            # Combined datetime column
+            first_val = str(df[date_col].iloc[0]).strip()
             
-            if format_type == "separate_datetime":
-                # Format C: Separate Date and Time columns
-                self.format_detected = "C"
-                df["timestamp"] = self._parse_separate_datetime(df, date_col, time_col)
+            def clean_tz(x):
+                s = str(x).strip()
+                for tz in [" EST", " EDT", " CST", " CDT", " PST", " PDT"]:
+                    s = s.replace(tz, "")
+                return s.strip()
+            
+            if " - " in first_val:
+                # Format A
+                self.format_detected = "A"
+                df["timestamp"] = df[date_col].apply(
+                    lambda x: pd.to_datetime(clean_tz(x).replace(" - ", " "), errors="coerce"))
+                multiplier = 0.001
+            elif "/" in first_val:
+                # Format B
+                self.format_detected = "B"
+                df["timestamp"] = df[date_col].apply(
+                    lambda x: pd.to_datetime(clean_tz(x), format="%m/%d/%Y %H:%M", errors="coerce"))
                 multiplier = 1.0
             else:
-                # Combined datetime column
-                df["timestamp"], multiplier = self._parse_combined_datetime(df, date_col)
-            
-            # Parse values
-            df["kwh"] = pd.to_numeric(df[value_col], errors="coerce") * multiplier
-            
-            # Clean up
-            df = df[["timestamp", "kwh"]].dropna()
-            
-            if len(df) == 0:
-                raise ValueError(
-                    f"No valid data after parsing.\n"
-                    f"Date column '{date_col}' sample: {preview.iloc[header_row+1:header_row+3, :].values.tolist()}\n"
-                    f"Check date format is parseable."
-                )
-            
-            # Sort chronologically
-            df = df.sort_values("timestamp").reset_index(drop=True)
-            
-            self.df = df
-            self.debug_info["final_row_count"] = len(df)
-            self.debug_info["date_range"] = f"{df['timestamp'].min()} to {df['timestamp'].max()}"
-            
-            return df
-            
-        except Exception as e:
-            error_msg = str(e)
-            debug_str = "\n".join([f"  {k}: {v}" for k, v in self.debug_info.items()])
-            raise ValueError(
-                f"AMI Load Error: {error_msg}\n\n"
-                f"Debug Info:\n{debug_str}\n\n"
-                f"Expected file formats:\n"
-                f"  Format A: Combined column 'Jan 15, 2025 - 2:30 PM EST' + value in Wh\n"
-                f"  Format B: Combined column '01/12/2026 00:15 EST' + value in kWh\n"
-                f"  Format C: Separate 'Date' and 'Time' columns (e.g., '2026-03-11', '12:00 am')\n"
-                f"  Format D: Standard datetime column + numeric value column"
-            )
+                # Format D
+                self.format_detected = "D"
+                df["timestamp"] = pd.to_datetime(df[date_col], errors="coerce")
+                multiplier = 1.0
+        
+        df["kwh"] = pd.to_numeric(df[value_col], errors="coerce") * multiplier
+        df = df[["timestamp", "kwh"]].dropna()
+        df = df.sort_values("timestamp").reset_index(drop=True)
+        
+        self.df = df
+        return df
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -806,8 +600,6 @@ class AMILoader:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class AMIFeatures:
-    """Compute features from AMI interval data."""
-    
     def __init__(self, df, unit="kWh"):
         self.df = df.copy()
         self.unit = unit
@@ -820,7 +612,7 @@ class AMIFeatures:
         interval_minutes = int(interval.total_seconds() / 60)
         
         base_load = df["kwh"].quantile(0.05)
-        base_load_rate = base_load / (interval_minutes / 60)  # per hour rate
+        base_load_rate = base_load / (interval_minutes / 60)
         peak_val = df["kwh"].max()
         peak_rate = peak_val / (interval_minutes / 60)
         
@@ -832,33 +624,22 @@ class AMIFeatures:
         df["hour"] = df["timestamp"].dt.hour
         avg_by_hour = df.groupby("hour")["kwh"].mean()
         
-        # Load factor (meaningful for electricity)
         total_val = df["kwh"].sum()
         hours = len(df) * interval_minutes / 60
         avg_demand = total_val / hours if hours > 0 else 0
         load_factor = avg_demand / peak_rate if peak_rate > 0 else 0
         
-        # Time-of-use ratio (peak 2-7pm vs off-peak)
-        peak_hours = df[df["hour"].between(14, 19)]["kwh"].mean()
-        off_peak = df[~df["hour"].between(14, 19)]["kwh"].mean()
-        tou_ratio = peak_hours / off_peak if off_peak > 0 else 1
-        
         return {
             "interval_minutes": interval_minutes,
             "base_load": base_load,
-            "base_load_kw": base_load_rate,  # Kept for backward compatibility
             "base_load_rate": base_load_rate,
-            "peak_kwh": peak_val,  # Kept for backward compatibility
             "peak_val": peak_val,
-            "peak_kw": peak_rate,  # Kept for backward compatibility
             "peak_rate": peak_rate,
-            "daily_avg_kwh": daily_avg,  # Kept for backward compatibility
             "daily_avg": daily_avg,
             "daily_series": daily_series,
             "peak_day": peak_day,
             "avg_by_hour": avg_by_hour,
             "load_factor": load_factor,
-            "tou_ratio": tou_ratio,
             "df": df,
             "unit": self.unit,
         }
@@ -872,15 +653,15 @@ GAINESVILLE_LAT = 29.6516
 GAINESVILLE_LON = -82.3248
 
 @st.cache_data(ttl=3600)
-def get_temperature_data(start_date, end_date, lat=GAINESVILLE_LAT, lon=GAINESVILLE_LON):
+def get_gainesville_temps(start_date, end_date):
     """Fetch daily temperature data from Open-Meteo API."""
     start = pd.to_datetime(start_date).strftime("%Y-%m-%d")
     end = pd.to_datetime(end_date).strftime("%Y-%m-%d")
     
     url = "https://archive-api.open-meteo.com/v1/archive"
     params = {
-        "latitude": lat,
-        "longitude": lon,
+        "latitude": GAINESVILLE_LAT,
+        "longitude": GAINESVILLE_LON,
         "start_date": start,
         "end_date": end,
         "daily": ["temperature_2m_max", "temperature_2m_min"],
@@ -907,159 +688,155 @@ def get_temperature_data(start_date, end_date, lat=GAINESVILLE_LAT, lon=GAINESVI
         return None
 
 
-def compute_degree_days(temp_avg, base=65):
-    """Compute Heating and Cooling Degree Days."""
-    hdd = max(0, base - temp_avg)
-    cdd = max(0, temp_avg - base)
-    return hdd, cdd
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# WEATHER ANOMALY DETECTION
-# ═══════════════════════════════════════════════════════════════════════════════
-
-class WeatherAnomalyDetector:
-    """Weather-normalized anomaly detection using regression."""
+def merge_consumption_temp(df_div, df_temp):
+    """Merge meter consumption with temperature - exact Colab logic."""
+    df = df_div.copy().sort_values("mr_date").reset_index(drop=True)
+    df = df[df["consumption"] > 0]
     
-    def __init__(self, df_meter, df_temp, comfort_base=65, z_threshold=2.5):
-        self.df_meter = df_meter.copy()
-        self.df_temp = df_temp
-        self.comfort_base = comfort_base
-        self.z_threshold = z_threshold
-        self.model = None
-        self.results = None
+    temp_avgs, temp_maxs, temp_mins = [], [], []
     
-    def run(self):
-        df = self.df_meter.sort_values("mr_date").reset_index(drop=True)
+    for _, row in df.iterrows():
+        end_date = row["mr_date"]
+        start_date = end_date - pd.Timedelta(days=int(row["days"]))
         
-        # Compute degree days for each billing period
-        records = []
-        for _, row in df.iterrows():
-            end_date = row["mr_date"]
-            days = int(row["days"]) if pd.notna(row["days"]) else 30
-            start_date = end_date - pd.Timedelta(days=days)
-            
-            # Get temps for this period
-            mask = (self.df_temp.index > start_date) & (self.df_temp.index <= end_date)
-            period_temps = self.df_temp.loc[mask, "temp_avg"]
-            
-            if len(period_temps) == 0:
-                continue
-            
-            hdd = sum(max(0, self.comfort_base - t) for t in period_temps)
-            cdd = sum(max(0, t - self.comfort_base) for t in period_temps)
-            
-            records.append({
-                "mr_date": end_date,
-                "consumption": row["consumption"],
-                "days": days,
-                "daily_avg": row["consumption"] / days if days > 0 else 0,
-                "hdd": hdd,
-                "cdd": cdd,
-                "temp_avg": period_temps.mean(),
-            })
+        mask = (df_temp.index >= start_date) & (df_temp.index <= end_date)
+        period_temps = df_temp[mask]
         
-        if len(records) < 6:
-            return None
-        
-        df_analysis = pd.DataFrame(records)
-        
-        # Fit regression model
-        X = df_analysis[["hdd", "cdd"]].values
-        y = df_analysis["daily_avg"].values
-        
-        try:
-            self.model = HuberRegressor().fit(X, y)
-            df_analysis["predicted"] = self.model.predict(X)
-            df_analysis["residual"] = df_analysis["daily_avg"] - df_analysis["predicted"]
-            
-            residual_std = df_analysis["residual"].std()
-            df_analysis["residual_z"] = df_analysis["residual"] / residual_std if residual_std > 0 else 0
-            
-            df_analysis["anomaly_high"] = df_analysis["residual_z"] > self.z_threshold
-            df_analysis["anomaly_low"] = df_analysis["residual_z"] < -self.z_threshold
-            df_analysis["anomaly"] = df_analysis["anomaly_high"] | df_analysis["anomaly_low"]
-            
-            # Persistent anomalies (2+ consecutive)
-            df_analysis["persistent_high"] = (
-                df_analysis["anomaly_high"] & 
-                df_analysis["anomaly_high"].shift(1).fillna(False)
-            )
-            df_analysis["persistent_low"] = (
-                df_analysis["anomaly_low"] & 
-                df_analysis["anomaly_low"].shift(1).fillna(False)
-            )
-            
-            self.results = df_analysis
-            return df_analysis
-            
-        except Exception as e:
-            st.warning(f"Regression model failed: {e}")
-            return None
-    
-    def get_interpretation(self):
-        """Generate auditor interpretation of results."""
-        if self.results is None:
-            return None
-        
-        df = self.results
-        interpretations = []
-        
-        # Model fit
-        r2 = 1 - (df["residual"].var() / df["daily_avg"].var()) if df["daily_avg"].var() > 0 else 0
-        
-        if r2 > 0.7:
-            interpretations.append({
-                "type": "success",
-                "title": "Strong Weather Correlation",
-                "text": f"Weather explains {r2:.0%} of consumption variance. Building responds predictably to temperature changes."
-            })
-        elif r2 > 0.4:
-            interpretations.append({
-                "type": "info",
-                "title": "Moderate Weather Correlation",
-                "text": f"Weather explains {r2:.0%} of consumption variance. Other factors (occupancy, equipment) also significant."
-            })
+        if not period_temps.empty:
+            temp_avgs.append(period_temps["temp_avg"].mean())
+            temp_maxs.append(period_temps["temp_max"].mean())
+            temp_mins.append(period_temps["temp_min"].mean())
         else:
-            interpretations.append({
-                "type": "warning",
-                "title": "Weak Weather Correlation",
-                "text": f"Weather explains only {r2:.0%} of consumption variance. Usage driven primarily by non-weather factors."
-            })
-        
-        # Anomalies
-        n_high = df["anomaly_high"].sum()
-        n_low = df["anomaly_low"].sum()
-        n_persistent_high = df["persistent_high"].sum()
-        
-        if n_persistent_high > 0:
-            interpretations.append({
-                "type": "danger",
-                "title": "Persistent High Usage Detected",
-                "text": f"{n_persistent_high} consecutive periods with unexpectedly high consumption. Investigate potential issues: HVAC inefficiency, air leaks, equipment malfunction, or occupancy changes."
-            })
-        elif n_high > 0:
-            interpretations.append({
-                "type": "warning",
-                "title": "Occasional High Usage",
-                "text": f"{n_high} periods with higher-than-expected consumption. May indicate sporadic issues or temporary changes."
-            })
-        
-        if n_low > 0:
-            interpretations.append({
-                "type": "info",
-                "title": "Low Usage Periods",
-                "text": f"{n_low} periods with lower-than-expected consumption. May indicate vacancy, conservation efforts, or equipment issues."
-            })
-        
-        if n_high == 0 and n_low == 0:
-            interpretations.append({
-                "type": "success",
-                "title": "Consistent Performance",
-                "text": "No significant anomalies detected. Consumption patterns are consistent with weather expectations."
-            })
-        
-        return interpretations
+            temp_avgs.append(None)
+            temp_maxs.append(None)
+            temp_mins.append(None)
+    
+    df["temp_avg"] = temp_avgs
+    df["temp_max"] = temp_maxs
+    df["temp_min"] = temp_mins
+    
+    return df.dropna(subset=["temp_avg"])
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TEMPERATURE CHARTS - Exact Colab style
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def plot_temp_overlay(df_merged, title_prefix=""):
+    """Consumption bars with temperature line overlaid."""
+    fig, ax1 = plt.subplots(figsize=(13, 4))
+    
+    unit = df_merged["mr_unit"].iloc[0] if "mr_unit" in df_merged.columns else "Usage"
+    
+    ax1.bar(df_merged["mr_date"], df_merged["consumption"],
+           width=20, color="steelblue", alpha=0.6, label="Consumption")
+    ax1.set_ylabel(unit, color="steelblue")
+    ax1.tick_params(axis="y", labelcolor="steelblue")
+    
+    ax2 = ax1.twinx()
+    ax2.plot(df_merged["mr_date"], df_merged["temp_avg"],
+            color="crimson", linewidth=2.2, marker="o", markersize=4, label="Avg Temp")
+    ax2.fill_between(df_merged["mr_date"],
+                    df_merged["temp_min"], df_merged["temp_max"],
+                    color="crimson", alpha=0.08, label="Temp Range")
+    ax2.set_ylabel("Temperature (F)", color="crimson")
+    ax2.tick_params(axis="y", labelcolor="crimson")
+    
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax1.legend(lines1 + lines2, labels1 + labels2, loc="upper left", fontsize=8)
+    ax1.set_title(f"{title_prefix} - Consumption vs Temperature")
+    fig.autofmt_xdate()
+    plt.tight_layout()
+    return fig
+
+
+def plot_temp_side_by_side(df_merged, title_prefix=""):
+    """Consumption and temperature as stacked panels."""
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(13, 6), sharex=True)
+    
+    unit = df_merged["mr_unit"].iloc[0] if "mr_unit" in df_merged.columns else "Usage"
+    
+    ax1.bar(df_merged["mr_date"], df_merged["consumption"],
+           width=20, color="steelblue", alpha=0.85)
+    ax1.set_ylabel(unit)
+    ax1.set_title(f"{title_prefix} - Consumption")
+    
+    ax2.plot(df_merged["mr_date"], df_merged["temp_avg"],
+            color="crimson", linewidth=2, marker="o", markersize=4, label="Avg Temp")
+    ax2.fill_between(df_merged["mr_date"],
+                    df_merged["temp_min"], df_merged["temp_max"],
+                    color="crimson", alpha=0.1, label="Temp Range")
+    ax2.axhline(65, color="gray", linewidth=1, linestyle="--", label="65F baseline")
+    ax2.set_ylabel("Temperature (F)")
+    ax2.set_title("Daily Avg Temperature per Billing Period")
+    ax2.legend(fontsize=8)
+    
+    fig.autofmt_xdate()
+    plt.tight_layout()
+    return fig
+
+
+def plot_temp_scatter(df_merged, title_prefix="", division="Electricity"):
+    """Temperature correlation scatter plot."""
+    unit = df_merged["mr_unit"].iloc[0] if "mr_unit" in df_merged.columns else ""
+    
+    COMFORT_BASELINE = 65
+    df = df_merged.copy()
+    df["temp_delta"] = (df["temp_avg"] - COMFORT_BASELINE).abs()
+    
+    if "days" in df.columns:
+        df["daily_cons"] = df["consumption"] / df["days"]
+    else:
+        df["daily_cons"] = df["consumption"]
+    
+    # Different logic for Gas vs Electric
+    if division == "Gas":
+        r_primary = df["daily_cons"].corr(df["temp_avg"])
+        x_col = "temp_avg"
+        xlabel = "Avg Temperature (F) - expect negative correlation for heating"
+        title_r = f"Linear r = {r_primary:.2f}"
+    else:
+        r_primary = df["daily_cons"].corr(df["temp_delta"])
+        r_linear = df["daily_cons"].corr(df["temp_avg"])
+        x_col = "temp_delta"
+        xlabel = "|Temperature - 65F| (deviation from comfort baseline)"
+        title_r = f"V-shape r = {r_primary:.2f} (Linear r = {r_linear:.2f})"
+    
+    # Color by season
+    def season_color(temp):
+        if temp >= 80:
+            return "#f76f6f"
+        elif temp <= 55:
+            return "#4f8ef7"
+        else:
+            return "#3ecf8e"
+    
+    colors = df["temp_avg"].apply(season_color)
+    
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.scatter(df[x_col], df["daily_cons"], c=colors, s=60, alpha=0.8, edgecolors="white")
+    
+    # Trend line
+    z = np.polyfit(df[x_col], df["daily_cons"], 1)
+    p = np.poly1d(z)
+    x_line = np.linspace(df[x_col].min(), df[x_col].max(), 100)
+    ax.plot(x_line, p(x_line), color="crimson", linewidth=2, linestyle="--", label="Trend")
+    
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(f"Daily {unit}")
+    ax.set_title(f"{title_prefix} - Temperature Correlation ({title_r})")
+    
+    # Legend
+    legend_elements = [
+        mpatches.Patch(color="#f76f6f", label="Hot (>80F)"),
+        mpatches.Patch(color="#3ecf8e", label="Mild (55-80F)"),
+        mpatches.Patch(color="#4f8ef7", label="Cold (<55F)"),
+    ]
+    ax.legend(handles=legend_elements, loc="upper right")
+    
+    plt.tight_layout()
+    return fig, r_primary
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1067,30 +844,19 @@ class WeatherAnomalyDetector:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class FractalAnalyzer:
-    """
-    Fractal analysis for energy consumption time series.
-    Based on Knowles et al. (2017) - University of Florida.
-    
-    Implements Detrended Fluctuation Analysis (DFA) for Hurst exponent.
-    """
+    """Fractal analysis for energy consumption - Hurst exponent via DFA."""
     
     def __init__(self, df_ami, value_col="kwh", time_col="timestamp"):
         self.df = df_ami.copy().sort_values(time_col).reset_index(drop=True)
         self.values = self.df[value_col].values
-        self.timestamps = self.df[time_col]
         self.differenced = np.diff(self.values)
     
     def detrended_fluctuation_analysis(self, min_window=4, max_window=None, num_windows=20):
-        """
-        Perform Detrended Fluctuation Analysis (DFA).
-        
-        Returns Hurst exponent (H):
-        - H < 0.5: Anti-persistent (mean-reverting)
-        - H = 0.5: Random walk (uncorrelated)
-        - H > 0.5: Persistent (trending)
-        """
         data = self.differenced
         N = len(data)
+        
+        if N < 20:
+            return {"error": "Insufficient data for DFA"}
         
         if max_window is None:
             max_window = N // 4
@@ -1123,7 +889,7 @@ class FractalAnalyzer:
                 fluctuations.append((n, np.mean(rms_values)))
         
         if len(fluctuations) < 3:
-            return {"error": "Insufficient data for DFA"}
+            return {"error": "Insufficient valid fluctuations"}
         
         windows = np.array([f[0] for f in fluctuations])
         F_n = np.array([f[1] for f in fluctuations])
@@ -1140,7 +906,6 @@ class FractalAnalyzer:
         return {
             "hurst_exponent": slope,
             "r_squared": r_value ** 2,
-            "p_value": p_value,
             "window_sizes": windows[valid],
             "fluctuations": F_n[valid],
             "log_n": log_n,
@@ -1149,388 +914,41 @@ class FractalAnalyzer:
             "intercept": intercept,
         }
     
-    def distribution_analysis(self):
-        """Analyze distribution characteristics."""
-        raw = self.values
-        diff = self.differenced
-        
-        raw_stats = {
-            "mean": np.mean(raw),
-            "std": np.std(raw),
-            "skewness": stats.skew(raw),
-            "kurtosis": stats.kurtosis(raw),
-        }
-        
-        diff_stats = {
-            "mean": np.mean(diff),
-            "std": np.std(diff),
-            "skewness": stats.skew(diff),
-            "kurtosis": stats.kurtosis(diff),
-        }
-        
-        ks_raw = stats.kstest(raw, 'norm', args=(np.mean(raw), np.std(raw)))
-        ks_diff = stats.kstest(diff, 'norm', args=(np.mean(diff), np.std(diff)))
-        
-        return {
-            "raw": raw_stats,
-            "differenced": diff_stats,
-            "normality_tests": {
-                "raw_ks_pvalue": ks_raw.pvalue,
-                "raw_is_normal": ks_raw.pvalue > 0.05,
-                "diff_ks_pvalue": ks_diff.pvalue,
-                "diff_is_normal": ks_diff.pvalue > 0.05,
-            }
-        }
-    
-    def get_interpretation(self, dfa_result, dist_result):
-        """Generate auditor interpretation."""
+    def get_interpretation(self, dfa_result):
         if "error" in dfa_result:
             return [{"type": "warning", "title": "Analysis Error", "text": dfa_result["error"]}]
         
         H = dfa_result["hurst_exponent"]
-        K = dist_result["raw"]["kurtosis"]
         interpretations = []
         
-        # Hurst interpretation
-        if H < 0.35:
+        if H < 0.4:
             interpretations.append({
                 "type": "info",
-                "title": f"Strongly Anti-Persistent Pattern (H = {H:.3f})",
-                "text": "Usage strongly mean-reverts. High consumption periods are quickly followed by low periods. This suggests highly variable occupant behavior with frequent manual adjustments."
-            })
-        elif H < 0.45:
-            interpretations.append({
-                "type": "info", 
                 "title": f"Anti-Persistent Pattern (H = {H:.3f})",
-                "text": "Usage tends to bounce back toward average. Indicates variable scheduling or reactive behavior patterns."
+                "text": "Highly variable occupant behavior. High consumption periods quickly followed by low periods. Focus on behavior-based interventions: programmable thermostat, scheduling."
             })
         elif H < 0.55:
             interpretations.append({
                 "type": "info",
-                "title": f"Random/Mixed Pattern (H = {H:.3f})",
-                "text": "Usage pattern shows no strong persistence or anti-persistence. Mix of predictable and unpredictable factors."
-            })
-        elif H < 0.65:
-            interpretations.append({
-                "type": "success",
-                "title": f"Weakly Persistent Pattern (H = {H:.3f})",
-                "text": "Usage shows mild trending behavior. Relatively consistent patterns that are easier to predict."
+                "title": f"Mixed Pattern (H = {H:.3f})",
+                "text": "Usage shows no strong persistence. Mix of predictable and unpredictable factors."
             })
         else:
             interpretations.append({
                 "type": "success",
-                "title": f"Strongly Persistent Pattern (H = {H:.3f})",
-                "text": "Usage trends continue over time. Indicates consistent, automated, or predictable consumption patterns. Easier to baseline and model."
-            })
-        
-        # Kurtosis interpretation
-        if K > 5:
-            interpretations.append({
-                "type": "warning",
-                "title": f"High Kurtosis ({K:.1f})",
-                "text": "Frequent extreme usage events (spikes/drops). Check for large cycling equipment: HVAC, electric water heater, EV charging. Load shifting opportunities may exist."
-            })
-        
-        # Recommendations
-        if H < 0.4:
-            interpretations.append({
-                "type": "info",
-                "title": "Recommended Approach",
-                "text": "Focus on behavior-based interventions. Consider programmable thermostat, occupant education, and scheduling optimization. Pre/post comparisons will be challenging due to high variability."
-            })
-        elif H > 0.6:
-            interpretations.append({
-                "type": "info",
-                "title": "Recommended Approach", 
-                "text": "Focus on equipment-based interventions. Building shows predictable patterns suitable for efficiency upgrades. Pre/post comparisons will be reliable."
+                "title": f"Persistent Pattern (H = {H:.3f})",
+                "text": "Consistent, predictable consumption patterns. Focus on equipment upgrades. Pre/post comparisons will be reliable."
             })
         
         return interpretations
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# CHART FUNCTIONS
+# PDF REPORT
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def create_meter_consumption_chart(df, title="Consumption History"):
-    """Create meter consumption bar chart."""
-    fig, ax = plt.subplots(figsize=(12, 5))
-    
-    colors = [COLORS["danger"] if row["anomaly"] else COLORS["secondary"] 
-              for _, row in df.iterrows()]
-    
-    ax.bar(df["mr_date"], df["consumption"], color=colors, alpha=0.8, width=20)
-    
-    # Add trend line
-    z = np.polyfit(range(len(df)), df["consumption"], 1)
-    trend = np.poly1d(z)(range(len(df)))
-    ax.plot(df["mr_date"], trend, color=COLORS["accent"], linestyle="--", 
-            linewidth=2, label="Trend")
-    
-    ax.set_xlabel("Meter Read Date")
-    ax.set_ylabel(df["mr_unit"].iloc[0] if "mr_unit" in df.columns else "Consumption")
-    ax.set_title(title, fontweight="bold", fontsize=14)
-    ax.legend()
-    
-    fig.autofmt_xdate()
-    plt.tight_layout()
-    return fig
-
-
-def create_daily_average_chart(df, title="Daily Average Consumption"):
-    """Create daily average line chart."""
-    fig, ax = plt.subplots(figsize=(12, 5))
-    
-    if "avg_daily" in df.columns:
-        ax.plot(df["mr_date"], df["avg_daily"], color=COLORS["primary"], 
-                linewidth=2, marker="o", markersize=6)
-        ax.fill_between(df["mr_date"], df["avg_daily"], alpha=0.3, color=COLORS["secondary"])
-    
-    ax.set_xlabel("Meter Read Date")
-    ax.set_ylabel("Daily Average")
-    ax.set_title(title, fontweight="bold", fontsize=14)
-    
-    fig.autofmt_xdate()
-    plt.tight_layout()
-    return fig
-
-
-def create_ami_load_shape(df, title="Load Shape", unit="kWh"):
-    """Create AMI load shape chart."""
-    fig, ax = plt.subplots(figsize=(14, 5))
-    
-    ax.plot(df["timestamp"], df["kwh"], color=COLORS["secondary"], 
-            linewidth=0.5, alpha=0.8)
-    ax.fill_between(df["timestamp"], df["kwh"], alpha=0.3, color=COLORS["secondary"])
-    
-    ax.set_xlabel("Date/Time")
-    ax.set_ylabel(f"{unit} per Interval")
-    ax.set_title(title, fontweight="bold", fontsize=14)
-    
-    fig.autofmt_xdate()
-    plt.tight_layout()
-    return fig
-
-
-def create_hourly_profile(avg_by_hour, title="Average Hourly Profile", unit="kWh"):
-    """Create hourly profile chart."""
-    fig, ax = plt.subplots(figsize=(10, 5))
-    
-    hours = avg_by_hour.index
-    values = avg_by_hour.values
-    
-    # Color by time of day
-    colors = []
-    for h in hours:
-        if 6 <= h < 9 or 17 <= h < 21:
-            colors.append(COLORS["accent"])  # Peak
-        elif 9 <= h < 17:
-            colors.append(COLORS["secondary"])  # Day
-        else:
-            colors.append(COLORS["primary"])  # Night
-    
-    ax.bar(hours, values, color=colors, alpha=0.8, edgecolor="white")
-    
-    ax.set_xlabel("Hour of Day")
-    ax.set_ylabel(f"Average {unit}")
-    ax.set_title(title, fontweight="bold", fontsize=14)
-    ax.set_xticks(range(0, 24, 2))
-    
-    # Add legend
-    from matplotlib.patches import Patch
-    legend_elements = [
-        Patch(facecolor=COLORS["primary"], label="Night (9PM-6AM)"),
-        Patch(facecolor=COLORS["secondary"], label="Day (9AM-5PM)"),
-        Patch(facecolor=COLORS["accent"], label="Peak (6-9AM, 5-9PM)"),
-    ]
-    ax.legend(handles=legend_elements, loc="upper right")
-    
-    plt.tight_layout()
-    return fig
-
-
-def create_temperature_overlay(df_merged, title="Consumption vs Temperature"):
-    """Create temperature overlay chart."""
-    fig, ax1 = plt.subplots(figsize=(14, 5))
-    
-    # Temperature-based coloring
-    colors = []
-    for t in df_merged["temp_avg"]:
-        if t >= 80:
-            colors.append(COLORS["danger"])
-        elif t <= 55:
-            colors.append(COLORS["secondary"])
-        else:
-            colors.append(COLORS["success"])
-    
-    ax1.bar(df_merged["date"], df_merged["kwh"], color=colors, alpha=0.7, width=0.8)
-    ax1.set_xlabel("Date")
-    ax1.set_ylabel("Daily kWh", color=COLORS["primary"])
-    ax1.tick_params(axis="y", labelcolor=COLORS["primary"])
-    
-    # Temperature line
-    ax2 = ax1.twinx()
-    ax2.plot(df_merged["date"], df_merged["temp_avg"], color=COLORS["accent"], 
-             linewidth=2.5, marker="o", markersize=4)
-    ax2.axhline(65, color=COLORS["accent"], linestyle="--", linewidth=1, alpha=0.5)
-    ax2.set_ylabel("Temperature (F)", color=COLORS["accent"])
-    ax2.tick_params(axis="y", labelcolor=COLORS["accent"])
-    
-    ax1.set_title(title, fontweight="bold", fontsize=14)
-    
-    # Legend
-    from matplotlib.patches import Patch
-    from matplotlib.lines import Line2D
-    legend_elements = [
-        Patch(facecolor=COLORS["danger"], alpha=0.7, label="Hot (>80F)"),
-        Patch(facecolor=COLORS["success"], alpha=0.7, label="Mild (55-80F)"),
-        Patch(facecolor=COLORS["secondary"], alpha=0.7, label="Cold (<55F)"),
-        Line2D([0], [0], color=COLORS["accent"], linewidth=2.5, marker="o", label="Temperature"),
-    ]
-    ax1.legend(handles=legend_elements, loc="upper left", fontsize=8)
-    
-    fig.autofmt_xdate()
-    plt.tight_layout()
-    return fig
-
-
-def create_weather_anomaly_chart(df_analysis, title="Weather-Normalized Analysis"):
-    """Create weather anomaly detection chart."""
-    fig, axes = plt.subplots(2, 1, figsize=(14, 8), sharex=True)
-    
-    # Top: Actual vs Predicted
-    ax1 = axes[0]
-    ax1.plot(df_analysis["mr_date"], df_analysis["daily_avg"], 
-             color=COLORS["primary"], linewidth=2, marker="o", label="Actual")
-    ax1.plot(df_analysis["mr_date"], df_analysis["predicted"],
-             color=COLORS["success"], linewidth=2, linestyle="--", label="Expected")
-    ax1.fill_between(df_analysis["mr_date"], 
-                     df_analysis["predicted"] - df_analysis["residual"].std() * 2,
-                     df_analysis["predicted"] + df_analysis["residual"].std() * 2,
-                     alpha=0.2, color=COLORS["success"], label="Normal Range")
-    
-    ax1.set_ylabel("Daily Average (kWh/day)")
-    ax1.set_title(title, fontweight="bold", fontsize=14)
-    ax1.legend(loc="upper right")
-    
-    # Bottom: Residual Z-scores
-    ax2 = axes[1]
-    colors = [COLORS["danger"] if z > 2.5 else COLORS["secondary"] if z < -2.5 
-              else COLORS["neutral"] for z in df_analysis["residual_z"]]
-    ax2.bar(df_analysis["mr_date"], df_analysis["residual_z"], color=colors, alpha=0.8)
-    ax2.axhline(2.5, color=COLORS["danger"], linestyle="--", linewidth=1.5, label="High Threshold")
-    ax2.axhline(-2.5, color=COLORS["secondary"], linestyle="--", linewidth=1.5, label="Low Threshold")
-    ax2.axhline(0, color=COLORS["dark"], linewidth=1)
-    
-    ax2.set_xlabel("Billing Period")
-    ax2.set_ylabel("Z-Score")
-    ax2.legend(loc="upper right")
-    
-    fig.autofmt_xdate()
-    plt.tight_layout()
-    return fig
-
-
-def create_dfa_chart(dfa_result, title="Detrended Fluctuation Analysis"):
-    """Create DFA scaling plot."""
-    if "error" in dfa_result:
-        fig, ax = plt.subplots(figsize=(10, 5))
-        ax.text(0.5, 0.5, dfa_result["error"], ha="center", va="center", fontsize=12)
-        ax.axis("off")
-        return fig
-    
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-    
-    # Scaling plot
-    ax1 = axes[0]
-    ax1.scatter(dfa_result["log_n"], dfa_result["log_F"], 
-                color=COLORS["secondary"], s=60, alpha=0.8, zorder=3)
-    
-    x_line = np.linspace(dfa_result["log_n"].min(), dfa_result["log_n"].max(), 100)
-    y_line = dfa_result["slope"] * x_line + dfa_result["intercept"]
-    ax1.plot(x_line, y_line, color=COLORS["danger"], linewidth=2, linestyle="--",
-             label=f"H = {dfa_result['hurst_exponent']:.3f} (R2 = {dfa_result['r_squared']:.3f})")
-    
-    ax1.set_xlabel("log(Window Size)")
-    ax1.set_ylabel("log(Fluctuation)")
-    ax1.set_title("DFA Scaling Plot", fontweight="bold")
-    ax1.legend()
-    ax1.grid(True, alpha=0.3)
-    
-    # Hurst interpretation
-    ax2 = axes[1]
-    H = dfa_result["hurst_exponent"]
-    
-    h_range = np.linspace(0, 1, 100)
-    for i, h in enumerate(h_range[:-1]):
-        color = COLORS["secondary"] if h < 0.5 else COLORS["danger"]
-        ax2.axvspan(h, h_range[i+1], color=color, alpha=0.2)
-    
-    ax2.axvline(0.5, color=COLORS["dark"], linewidth=2, linestyle="-", label="Random (H=0.5)")
-    ax2.axvline(H, color=COLORS["primary"], linewidth=3, label=f"This Building (H={H:.3f})")
-    
-    ax2.text(0.25, 0.8, "Anti-Persistent\n(Variable)", ha="center", va="center",
-             fontsize=10, transform=ax2.transAxes, color=COLORS["secondary"], fontweight="bold")
-    ax2.text(0.75, 0.8, "Persistent\n(Consistent)", ha="center", va="center",
-             fontsize=10, transform=ax2.transAxes, color=COLORS["danger"], fontweight="bold")
-    
-    ax2.set_xlim(0, 1)
-    ax2.set_ylim(0, 1)
-    ax2.set_xlabel("Hurst Exponent (H)")
-    ax2.set_title("Complexity Classification", fontweight="bold")
-    ax2.legend(loc="lower right")
-    ax2.set_yticks([])
-    
-    plt.tight_layout()
-    return fig
-
-
-def create_distribution_chart(values, diff, title="Distribution Analysis"):
-    """Create distribution analysis charts."""
-    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
-    
-    # Raw histogram
-    ax1 = axes[0]
-    ax1.hist(values, bins=50, color=COLORS["secondary"], alpha=0.7, edgecolor="white", density=True)
-    x = np.linspace(values.min(), values.max(), 100)
-    ax1.plot(x, stats.norm.pdf(x, np.mean(values), np.std(values)), 
-             color=COLORS["danger"], linewidth=2, linestyle="--", label="Normal fit")
-    ax1.set_title("Raw Data Distribution", fontweight="bold")
-    ax1.set_xlabel("kWh per interval")
-    ax1.set_ylabel("Density")
-    ax1.legend()
-    
-    # Differenced histogram
-    ax2 = axes[1]
-    ax2.hist(diff, bins=50, color=COLORS["success"], alpha=0.7, edgecolor="white", density=True)
-    x_d = np.linspace(diff.min(), diff.max(), 100)
-    ax2.plot(x_d, stats.norm.pdf(x_d, np.mean(diff), np.std(diff)),
-             color=COLORS["danger"], linewidth=2, linestyle="--", label="Normal fit")
-    ax2.set_title("Differenced Data", fontweight="bold")
-    ax2.set_xlabel("Change between intervals")
-    ax2.set_ylabel("Density")
-    ax2.legend()
-    
-    # Q-Q plot
-    ax3 = axes[2]
-    stats.probplot(diff, dist="norm", plot=ax3)
-    ax3.set_title("Q-Q Plot (Differenced)", fontweight="bold")
-    ax3.get_lines()[0].set_markerfacecolor(COLORS["secondary"])
-    ax3.get_lines()[0].set_markersize(4)
-    ax3.get_lines()[1].set_color(COLORS["danger"])
-    
-    plt.tight_layout()
-    return fig
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# PDF REPORT GENERATION
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def generate_pdf_report(customer_info, meter_data, ami_data, temp_data, 
-                        fractal_data=None, report_type="standard"):
-    """Generate PDF report."""
-    
+def generate_pdf_report(customer_info, charts, report_type="standard"):
+    """Generate PDF report with all charts."""
     buffer = io.BytesIO()
     
     with PdfPages(buffer) as pdf:
@@ -1538,127 +956,30 @@ def generate_pdf_report(customer_info, meter_data, ami_data, temp_data,
         fig, ax = plt.subplots(figsize=(11, 8.5))
         ax.axis("off")
         
-        ax.text(0.5, 0.8, "Energy Audit Analyzer", fontsize=28, fontweight="bold",
-                ha="center", va="center", color=COLORS["primary"])
-        ax.text(0.5, 0.7, "Consumption Analysis Report", fontsize=18,
-                ha="center", va="center", color=COLORS["dark"])
+        ax.text(0.5, 0.8, "Energy Audit Report", fontsize=28, fontweight="bold",
+               ha="center", va="center", color=COLORS["primary"])
         
         if customer_info:
             ax.text(0.5, 0.5, f"Customer: {customer_info.get('customer_name', 'N/A')}", 
-                    fontsize=14, ha="center", va="center")
+                   fontsize=14, ha="center", va="center")
             ax.text(0.5, 0.45, f"Account: {customer_info.get('account', 'N/A')}", 
-                    fontsize=12, ha="center", va="center")
+                   fontsize=12, ha="center", va="center")
             ax.text(0.5, 0.4, f"Address: {customer_info.get('address', 'N/A')}", 
-                    fontsize=12, ha="center", va="center")
+                   fontsize=12, ha="center", va="center")
         
-        report_label = "Standard Report (Weather Analysis)" if report_type == "standard" else "Advanced Report (Fractal Analysis)"
-        ax.text(0.5, 0.25, report_label, fontsize=12, ha="center", va="center",
-                style="italic", color=COLORS["neutral"])
+        label = "Standard Report" if report_type == "standard" else "Advanced Report"
+        ax.text(0.5, 0.25, label, fontsize=12, ha="center", style="italic")
         ax.text(0.5, 0.15, f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}", 
-                fontsize=10, ha="center", va="center", color=COLORS["neutral"])
+               fontsize=10, ha="center", color="gray")
         
         pdf.savefig(fig, bbox_inches="tight")
         plt.close(fig)
         
-        # Meter charts
-        if meter_data is not None:
-            for division, df in meter_data.items():
-                if not df.empty:
-                    # Consumption chart
-                    fig = create_meter_consumption_chart(df, f"{division} - Consumption History")
-                    pdf.savefig(fig, bbox_inches="tight")
-                    plt.close(fig)
-                    
-                    # Daily average
-                    fig = create_daily_average_chart(df, f"{division} - Daily Average")
-                    pdf.savefig(fig, bbox_inches="tight")
-                    plt.close(fig)
-        
-        # AMI charts
-        if ami_data is not None:
-            df_ami = ami_data["df"]
-            feats = ami_data["features"]
-            
-            fig = create_ami_load_shape(df_ami, "AMI Load Shape")
-            pdf.savefig(fig, bbox_inches="tight")
-            plt.close(fig)
-            
-            fig = create_hourly_profile(feats["avg_by_hour"], "Hourly Profile")
-            pdf.savefig(fig, bbox_inches="tight")
-            plt.close(fig)
-        
-        # Temperature charts
-        if temp_data is not None and "merged" in temp_data:
-            fig = create_temperature_overlay(temp_data["merged"], "Temperature Correlation")
-            pdf.savefig(fig, bbox_inches="tight")
-            plt.close(fig)
-            
-            if "anomaly_df" in temp_data and temp_data["anomaly_df"] is not None:
-                fig = create_weather_anomaly_chart(temp_data["anomaly_df"], "Weather-Normalized Analysis")
-                pdf.savefig(fig, bbox_inches="tight")
-                plt.close(fig)
-        
-        # Advanced (fractal) analysis
-        if report_type == "advanced" and fractal_data is not None:
-            fig = create_dfa_chart(fractal_data["dfa"], "Fractal Analysis - DFA")
-            pdf.savefig(fig, bbox_inches="tight")
-            plt.close(fig)
-            
-            fig = create_distribution_chart(
-                fractal_data["values"], 
-                fractal_data["differenced"],
-                "Distribution Analysis"
-            )
-            pdf.savefig(fig, bbox_inches="tight")
-            plt.close(fig)
-        
-        # Summary page
-        fig, ax = plt.subplots(figsize=(11, 8.5))
-        ax.axis("off")
-        
-        ax.text(0.5, 0.95, "Analysis Summary", fontsize=20, fontweight="bold",
-                ha="center", va="top", color=COLORS["primary"])
-        
-        y_pos = 0.85
-        summary_items = []
-        
-        if meter_data:
-            for div, df in meter_data.items():
-                if not df.empty:
-                    feats = MeterFeatures(df).compute_features()
-                    summary_items.append(f"{div}:")
-                    summary_items.append(f"  - Total: {feats['total_consumption']:,.0f} {feats['unit']}")
-                    summary_items.append(f"  - Daily Avg: {feats['overall_daily_avg']:.1f} {feats['unit']}/day")
-                    summary_items.append(f"  - Anomalies: {feats['n_anomalies']}")
-                    summary_items.append("")
-        
-        if ami_data:
-            feats = ami_data["features"]
-            summary_items.append("AMI Analysis:")
-            summary_items.append(f"  - Interval: {feats['interval_minutes']} minutes")
-            summary_items.append(f"  - Daily Avg: {feats['daily_avg_kwh']:.1f} kWh")
-            summary_items.append(f"  - Peak Demand: {feats['peak_kw']:.2f} kW")
-            summary_items.append(f"  - Load Factor: {feats['load_factor']:.1%}")
-            summary_items.append("")
-        
-        if fractal_data and "dfa" in fractal_data and "hurst_exponent" in fractal_data["dfa"]:
-            H = fractal_data["dfa"]["hurst_exponent"]
-            summary_items.append("Complexity Analysis:")
-            summary_items.append(f"  - Hurst Exponent: {H:.3f}")
-            if H < 0.45:
-                summary_items.append("  - Pattern: Anti-persistent (variable)")
-            elif H > 0.55:
-                summary_items.append("  - Pattern: Persistent (consistent)")
-            else:
-                summary_items.append("  - Pattern: Random/mixed")
-        
-        for item in summary_items:
-            ax.text(0.1, y_pos, item, fontsize=11, va="top", 
-                   fontfamily="monospace" if item.startswith("  ") else "sans-serif")
-            y_pos -= 0.04
-        
-        pdf.savefig(fig, bbox_inches="tight")
-        plt.close(fig)
+        # Add all charts
+        for chart in charts:
+            if chart is not None:
+                pdf.savefig(chart, bbox_inches="tight")
+                plt.close(chart)
     
     buffer.seek(0)
     return buffer
@@ -1669,7 +990,6 @@ def generate_pdf_report(customer_info, meter_data, ami_data, temp_data,
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def main():
-    # Header
     st.title("Energy Audit Analyzer")
     st.markdown("*Professional energy consumption analysis for auditors*")
     st.markdown("---")
@@ -1678,63 +998,52 @@ def main():
     with st.sidebar:
         st.header("Data Upload")
         
-        st.subheader("Meter Data")
         meter_file = st.file_uploader(
-            "Upload meter reading file (Excel)",
+            "Meter Reading File (Excel)",
             type=["xlsx", "xls"],
             key="meter"
         )
         
-        st.subheader("AMI Data")
         ami_file = st.file_uploader(
-            "Upload AMI interval data (Excel)",
+            "AMI Interval File (Excel)",
             type=["xlsx", "xls"],
             key="ami"
         )
         
         st.markdown("---")
         st.subheader("Settings")
-        z_threshold = st.slider("Anomaly Z-Threshold", 1.5, 4.0, 2.5, 0.1)
         comfort_base = st.slider("Comfort Baseline (F)", 60, 72, 65, 1)
     
-    # Check if any data uploaded
     if meter_file is None and ami_file is None:
         st.info("Upload meter data and/or AMI data to begin analysis.")
         
-        # Show instructions
-        with st.expander("How to Use This Tool"):
+        with st.expander("How to Use"):
             st.markdown("""
-            **1. Upload Your Data**
-            - **Meter File**: Excel file with billing/consumption history (must have 'Consumption' sheet)
-            - **AMI File**: Excel file with interval data (15-min or hourly readings)
-            - You can upload one or both files
+            **1. Upload Data**
+            - **Meter File**: Billing/consumption history with 'Consumption' sheet
+            - **AMI File**: 15-minute or hourly interval data
             
             **2. Review Analysis**
-            - Navigate through tabs to see different analyses
-            - Weather data is automatically fetched for Gainesville, FL
+            - Meter Analysis: Consumption, daily average, rolling trend, anomalies
+            - Temperature: Overlay, side-by-side, correlation scatter
+            - Advanced: Fractal complexity analysis (AMI only)
             
             **3. Export Reports**
-            - **Standard Report**: Includes consumption charts and weather analysis
-            - **Advanced Report**: Adds fractal complexity analysis
-            
-            **Understanding the Analysis**
-            - **Weather Normalization**: Compares actual usage to weather-expected usage
-            - **Anomaly Detection**: Flags periods with unusually high or low consumption
-            - **Fractal Analysis**: Reveals complexity patterns in energy use behavior
+            - Standard: Consumption + temperature analysis
+            - Advanced: Adds fractal analysis
             """)
         return
     
-    # Initialize data containers
+    # Initialize
     customer_info = None
     meter_data = {}
     ami_data = None
-    temp_data = {}
-    fractal_data = None
+    df_temp = None
+    all_charts = []
     
     # Process meter file
     if meter_file is not None:
         try:
-            # Reset file position
             meter_file.seek(0)
             customer_info = get_master_sheet_info(meter_file)
             
@@ -1745,18 +1054,12 @@ def main():
             for div in ["Electricity", "Water", "Gas"]:
                 df_div = loader.get_division(div)
                 if not df_div.empty:
-                    meter_data[div] = df_div
-                    
-            if not meter_data:
-                st.warning("Meter file loaded but no division data found. Check that 'Division' column exists.")
-                
+                    meter_data[div] = {
+                        "df": df_div,
+                        "has_mr_reason": loader.has_mr_reason
+                    }
         except Exception as e:
-            st.error("**Meter File Error**")
-            st.code(str(e), language=None)
-            st.info("**Troubleshooting Tips:**\n"
-                   "1. Ensure file has a sheet named 'Consumption'\n"
-                   "2. Required columns: Division, MR Date, Days, Consumption\n"
-                   "3. Check that dates are in a recognizable format")
+            st.error(f"**Meter File Error**: {e}")
     
     # Process AMI file
     if ami_file is not None:
@@ -1770,23 +1073,12 @@ def main():
                 "features": ami_feats,
                 "util_type": ami_loader.util_type,
                 "unit": ami_loader.unit,
-                "format": ami_loader.format_detected,
             }
-            
-            # Show format detected
-            st.sidebar.success(f"AMI Format: {ami_loader.format_detected}")
-            
+            st.sidebar.success(f"AMI: {ami_loader.util_type} (Format {ami_loader.format_detected})")
         except Exception as e:
-            st.error("**AMI File Error**")
-            st.code(str(e), language=None)
-            st.info("**Supported AMI Formats:**\n"
-                   "- **Format A:** Timestamp like 'Jan 15, 2025 - 2:30 PM EST'\n"
-                   "- **Format B:** Timestamp like '01/12/2026 00:15 EST'\n"
-                   "- **Format C:** Separate Date and Time columns\n"
-                   "- **Format D:** Standard datetime + numeric value\n\n"
-                   "**Required:** Date/Time column + Value column (numeric)")
+            st.error(f"**AMI File Error**: {e}")
     
-    # Display customer info
+    # Customer info header
     if customer_info and "customer_name" in customer_info:
         st.markdown(f"### {customer_info.get('customer_name', 'Customer')}")
         col1, col2, col3 = st.columns(3)
@@ -1798,8 +1090,8 @@ def main():
             st.markdown(f"**Survey Date:** {customer_info.get('survey_date', 'N/A')}")
         st.markdown("---")
     
-    # Create tabs
-    tab_names = ["Overview"]
+    # Build tabs
+    tab_names = []
     if meter_data:
         tab_names.append("Meter Analysis")
     if ami_data:
@@ -1810,106 +1102,74 @@ def main():
         tab_names.append("Advanced Analysis")
     tab_names.append("Export Report")
     
-    tabs = st.tabs(tab_names)
-    tab_index = 0
+    if not tab_names:
+        return
     
-    # ─── OVERVIEW TAB ───────────────────────────────────────────────────────────
-    with tabs[tab_index]:
-        tab_index += 1
-        
-        st.header("Analysis Overview")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.subheader("Data Summary")
-            
-            if meter_data:
-                st.markdown("**Meter Data:**")
-                for div, df in meter_data.items():
-                    feats = MeterFeatures(df).compute_features()
-                    st.markdown(f"""
-                    - **{div}**: {len(df)} readings
-                      - Total: {feats['total_consumption']:,.0f} {feats['unit']}
-                      - Daily Avg: {feats['overall_daily_avg']:.1f} {feats['unit']}/day
-                      - Quality Score: {feats['quality_score']}/100
-                    """)
-            
-            if ami_data:
-                feats = ami_data["features"]
-                st.markdown(f"""
-                **AMI Data ({ami_data['util_type']}):**
-                - Intervals: {len(ami_data['df']):,}
-                - Date Range: {ami_data['df']['timestamp'].min().date()} to {ami_data['df']['timestamp'].max().date()}
-                - Interval: {feats['interval_minutes']} minutes
-                - Daily Avg: {feats['daily_avg_kwh']:.1f} {ami_data['unit']}
-                """)
-        
-        with col2:
-            st.subheader("Quick Insights")
-            
-            if meter_data and "Electricity" in meter_data:
-                df_elec = meter_data["Electricity"]
-                feats = MeterFeatures(df_elec).compute_features()
-                
-                if feats["n_anomalies"] > 0:
-                    info_box(f"Found {feats['n_anomalies']} anomalous billing periods in electricity data that may warrant investigation.", "warning")
-                else:
-                    info_box("No significant anomalies detected in billing data.", "success")
-            
-            if ami_data:
-                feats = ami_data["features"]
-                if feats["load_factor"] < 0.3:
-                    info_box(f"Load factor is {feats['load_factor']:.1%}. Low load factor indicates peaky demand - potential for load shifting.", "info")
-                elif feats["load_factor"] > 0.5:
-                    info_box(f"Load factor is {feats['load_factor']:.1%}. Good load factor indicates consistent usage patterns.", "success")
+    tabs = st.tabs(tab_names)
+    tab_idx = 0
     
     # ─── METER ANALYSIS TAB ─────────────────────────────────────────────────────
     if meter_data:
-        with tabs[tab_index]:
-            tab_index += 1
+        with tabs[tab_idx]:
+            tab_idx += 1
             
             st.header("Meter Data Analysis")
             
-            for div, df in meter_data.items():
+            for div, data in meter_data.items():
                 st.subheader(div)
                 
+                df = data["df"]
                 feats = MeterFeatures(df).compute_features()
+                graphs = MeterGraphs(feats, title_prefix=div, has_mr_reason=data["has_mr_reason"])
                 
-                # Metrics row
+                # Metrics
                 col1, col2, col3, col4 = st.columns(4)
                 with col1:
-                    st.metric("Total Consumption", f"{feats['total_consumption']:,.0f} {feats['unit']}")
+                    st.metric("Total", f"{feats['total_consumption']:,.0f} {feats['unit']}")
                 with col2:
-                    st.metric("Daily Average", f"{feats['overall_daily_avg']:.1f} {feats['unit']}/day")
+                    if feats['overall_daily_avg']:
+                        st.metric("Daily Avg", f"{feats['overall_daily_avg']:.2f} {feats['unit']}/day")
                 with col3:
-                    st.metric("Peak Period", f"{feats['peak_consumption']:,.0f} {feats['unit']}")
+                    st.metric("Peak", f"{feats['peak_consumption']:,.0f} {feats['unit']}")
                 with col4:
                     st.metric("Anomalies", feats['n_anomalies'])
                 
                 # Charts
-                fig = create_meter_consumption_chart(feats["df_with_anomalies"], f"{div} - Consumption History")
+                fig = graphs.plot_consumption()
                 st.pyplot(fig)
-                plt.close(fig)
+                all_charts.append(fig)
                 
-                fig = create_daily_average_chart(df, f"{div} - Daily Average")
+                col1, col2 = st.columns(2)
+                with col1:
+                    fig = graphs.plot_daily_average()
+                    if fig:
+                        st.pyplot(fig)
+                        all_charts.append(fig)
+                
+                with col2:
+                    fig = graphs.plot_rolling_average()
+                    st.pyplot(fig)
+                    all_charts.append(fig)
+                
+                fig = graphs.plot_anomalies()
                 st.pyplot(fig)
-                plt.close(fig)
+                all_charts.append(fig)
                 
-                # Anomaly details
+                # Show anomalies
                 if feats["n_anomalies"] > 0:
                     with st.expander("View Anomalous Periods"):
                         anomalies = feats["df_with_anomalies"][feats["df_with_anomalies"]["anomaly"]]
-                        st.dataframe(anomalies[["mr_date", "consumption", "days", "avg_daily"]].reset_index(drop=True))
+                        cols = [c for c in ["mr_date", "days", "consumption", "avg_daily"] if c in anomalies.columns]
+                        st.dataframe(anomalies[cols].reset_index(drop=True))
                 
                 st.markdown("---")
     
     # ─── AMI ANALYSIS TAB ───────────────────────────────────────────────────────
     if ami_data:
-        with tabs[tab_index]:
-            tab_index += 1
+        with tabs[tab_idx]:
+            tab_idx += 1
             
-            st.header(f"AMI Interval Analysis ({ami_data['util_type']})")
+            st.header(f"AMI Analysis ({ami_data['util_type']})")
             
             df_ami = ami_data["df"]
             feats = ami_data["features"]
@@ -1918,7 +1178,7 @@ def main():
             # Metrics
             col1, col2, col3, col4 = st.columns(4)
             with col1:
-                st.metric("Daily Average", f"{feats['daily_avg']:.1f} {unit}")
+                st.metric("Daily Avg", f"{feats['daily_avg']:.1f} {unit}")
             with col2:
                 st.metric("Peak Interval", f"{feats['peak_val']:.1f} {unit}")
             with col3:
@@ -1926,235 +1186,177 @@ def main():
             with col4:
                 st.metric("Load Factor", f"{feats['load_factor']:.1%}")
             
-            # Charts
+            # Load shape
             st.subheader("Load Shape")
-            fig = create_ami_load_shape(df_ami, title=f"{ami_data['util_type']} Load Shape", unit=unit)
+            fig, ax = plt.subplots(figsize=(14, 5))
+            ax.plot(df_ami["timestamp"], df_ami["kwh"], color="steelblue", linewidth=0.5, alpha=0.8)
+            ax.fill_between(df_ami["timestamp"], df_ami["kwh"], alpha=0.3, color="steelblue")
+            ax.set_xlabel("Date/Time")
+            ax.set_ylabel(f"{unit} per Interval")
+            ax.set_title(f"{ami_data['util_type']} Load Shape")
+            fig.autofmt_xdate()
+            plt.tight_layout()
             st.pyplot(fig)
-            plt.close(fig)
+            all_charts.append(fig)
             
+            # Daily and Hourly
             col1, col2 = st.columns(2)
             
             with col1:
                 st.subheader("Daily Totals")
                 fig, ax = plt.subplots(figsize=(10, 5))
                 daily = feats["daily_series"]
-                ax.bar(daily.index, daily.values, color=COLORS["secondary"], alpha=0.8)
-                ax.axhline(feats["daily_avg"], color=COLORS["accent"], linestyle="--", 
-                          linewidth=2, label=f"Avg: {feats['daily_avg']:.1f} {unit}")
-                ax.set_xlabel("Date")
+                ax.bar(daily.index, daily.values, color="steelblue", alpha=0.8)
+                ax.axhline(feats["daily_avg"], color="crimson", linestyle="--", linewidth=2, 
+                          label=f"Avg: {feats['daily_avg']:.1f}")
                 ax.set_ylabel(f"Daily {unit}")
-                ax.set_title("Daily Consumption", fontweight="bold")
                 ax.legend()
                 fig.autofmt_xdate()
                 plt.tight_layout()
                 st.pyplot(fig)
-                plt.close(fig)
+                all_charts.append(fig)
             
             with col2:
                 st.subheader("Hourly Profile")
-                fig = create_hourly_profile(feats["avg_by_hour"], title=f"Average Hourly {unit}", unit=unit)
+                fig, ax = plt.subplots(figsize=(10, 5))
+                hours = feats["avg_by_hour"].index
+                values = feats["avg_by_hour"].values
+                colors = ["#e67e22" if 6 <= h < 9 or 17 <= h < 21 else 
+                         "#3498db" if 9 <= h < 17 else "#1e3a5f" for h in hours]
+                ax.bar(hours, values, color=colors, alpha=0.8)
+                ax.set_xlabel("Hour of Day")
+                ax.set_ylabel(f"Average {unit}")
+                ax.set_xticks(range(0, 24, 2))
+                plt.tight_layout()
                 st.pyplot(fig)
-                plt.close(fig)
-            
-            # Interpretation
-            st.subheader("Auditor Notes")
-            
-            if feats["tou_ratio"] > 1.3:
-                info_box(f"Peak-to-off-peak ratio is {feats['tou_ratio']:.2f}. Significant peak hour usage - time-of-use rate may benefit from load shifting.", "warning")
-            
-            if ami_data["util_type"] == "Electric" and feats["base_load_rate"] > 1.0:
-                info_box(f"Base load is {feats['base_load_rate']:.2f} kW. Consider investigating always-on loads: refrigeration, phantom loads, pool pumps.", "info")
-            elif ami_data["util_type"] == "Water" and feats["base_load"] > 10:
-                info_box(f"Base load is {feats['base_load']:.1f} {unit}/interval. Check for potential leaks or continuous water use.", "info")
+                all_charts.append(fig)
     
     # ─── TEMPERATURE ANALYSIS TAB ───────────────────────────────────────────────
     if meter_data or ami_data:
-        with tabs[tab_index]:
-            tab_index += 1
+        with tabs[tab_idx]:
+            tab_idx += 1
             
             st.header("Temperature Analysis")
             
-            # Determine date range
+            # Get date range
+            date_ranges = []
+            if meter_data:
+                for div, data in meter_data.items():
+                    dates = data["df"]["mr_date"]
+                    date_ranges.extend([dates.min(), dates.max()])
             if ami_data:
-                date_min = ami_data["df"]["timestamp"].min()
-                date_max = ami_data["df"]["timestamp"].max()
-            elif meter_data:
-                first_div = list(meter_data.values())[0]
-                date_min = first_div["mr_date"].min() - pd.Timedelta(days=35)
-                date_max = first_div["mr_date"].max()
+                dates = ami_data["df"]["timestamp"]
+                date_ranges.extend([dates.min(), dates.max()])
             
-            # Fetch temperature data
+            date_min = min(date_ranges) - pd.Timedelta(days=35)
+            date_max = max(date_ranges)
+            
+            # Fetch temperature
             with st.spinner("Fetching temperature data..."):
-                df_temp = get_temperature_data(date_min, date_max)
+                df_temp = get_gainesville_temps(date_min, date_max)
             
             if df_temp is None:
-                st.error("Could not fetch temperature data. Check your internet connection.")
+                st.error("Could not fetch temperature data.")
             else:
-                temp_data["df"] = df_temp
+                st.success(f"Temperature data: {len(df_temp)} days")
                 
-                # AMI temperature analysis
-                if ami_data:
-                    st.subheader("AMI vs Temperature")
-                    
-                    daily = ami_data["features"]["daily_series"].reset_index()
-                    daily.columns = ["date", "kwh"]
-                    daily["date"] = pd.to_datetime(daily["date"])
-                    
-                    merged = daily.merge(
-                        df_temp.reset_index().rename(columns={"index": "date"}),
-                        on="date", how="inner"
-                    ).dropna()
-                    
-                    if not merged.empty:
-                        temp_data["merged"] = merged
+                # Process each division
+                if meter_data:
+                    for div, data in meter_data.items():
+                        st.subheader(f"{div} vs Temperature")
                         
-                        fig = create_temperature_overlay(merged, "Daily Usage vs Temperature")
+                        df_merged = merge_consumption_temp(data["df"], df_temp)
+                        
+                        if df_merged.empty:
+                            st.warning(f"No temperature overlap for {div}")
+                            continue
+                        
+                        # Overlay
+                        fig = plot_temp_overlay(df_merged, title_prefix=div)
                         st.pyplot(fig)
-                        plt.close(fig)
+                        all_charts.append(fig)
                         
-                        # Correlation
-                        if ami_data["util_type"] == "Gas":
-                            corr = merged["kwh"].corr(merged["temp_avg"])
-                            st.markdown(f"**Temperature Correlation:** r = {corr:.2f}")
-                            if corr < -0.5:
-                                info_box("Strong negative correlation confirms heating load. Gas usage increases significantly as temperature drops.", "success")
-                        else:
-                            merged["temp_delta"] = (merged["temp_avg"] - comfort_base).abs()
-                            corr = merged["kwh"].corr(merged["temp_delta"])
-                            st.markdown(f"**Temperature Sensitivity:** r = {corr:.2f}")
-                            if corr > 0.6:
-                                info_box("Strong HVAC relationship. Building responds predictably to temperature deviations from comfort baseline.", "success")
-                            elif corr > 0.3:
-                                info_box("Moderate temperature sensitivity. Some HVAC load but other factors also significant.", "info")
+                        # Side by side
+                        fig = plot_temp_side_by_side(df_merged, title_prefix=div)
+                        st.pyplot(fig)
+                        all_charts.append(fig)
+                        
+                        # Scatter with correlation
+                        fig, r = plot_temp_scatter(df_merged, title_prefix=div, division=div)
+                        st.pyplot(fig)
+                        all_charts.append(fig)
+                        
+                        # Interpretation
+                        if div == "Gas":
+                            if r < -0.5:
+                                info_box(f"Strong negative correlation (r={r:.2f}): Gas usage increases significantly when temperature drops. Heating-driven.", "success")
+                            elif r < -0.2:
+                                info_box(f"Moderate negative correlation (r={r:.2f}): Some heating sensitivity.", "info")
                             else:
-                                info_box("Weak temperature sensitivity. Usage driven primarily by non-HVAC loads.", "info")
-                
-                # Meter weather anomaly analysis
-                if meter_data and "Electricity" in meter_data:
-                    st.subheader("Weather-Normalized Anomaly Detection")
-                    
-                    st.markdown("""
-                    **What This Shows:**
-                    This analysis compares actual electricity consumption to what would be expected based on weather (heating and cooling degree days).
-                    Periods that deviate significantly from expectations are flagged as anomalies.
-                    """)
-                    
-                    df_elec = meter_data["Electricity"]
-                    detector = WeatherAnomalyDetector(df_elec, df_temp, comfort_base, z_threshold)
-                    anomaly_df = detector.run()
-                    
-                    if anomaly_df is not None:
-                        temp_data["anomaly_df"] = anomaly_df
-                        temp_data["detector"] = detector
+                                info_box(f"Weak correlation (r={r:.2f}): Gas usage not strongly temperature-driven.", "warning")
+                        else:
+                            if r > 0.6:
+                                info_box(f"Strong temperature correlation (r={r:.2f}): Usage driven by HVAC. Building responds predictably to temperature.", "success")
+                            elif r > 0.3:
+                                info_box(f"Moderate correlation (r={r:.2f}): Some HVAC sensitivity, other factors also significant.", "info")
+                            else:
+                                info_box(f"Weak correlation (r={r:.2f}): Usage driven primarily by non-HVAC loads.", "warning")
                         
-                        fig = create_weather_anomaly_chart(anomaly_df, "Actual vs Expected Consumption")
-                        st.pyplot(fig)
-                        plt.close(fig)
-                        
-                        # Interpretations
-                        interpretations = detector.get_interpretation()
-                        if interpretations:
-                            st.subheader("Auditor Findings")
-                            for interp in interpretations:
-                                info_box(f"**{interp['title']}**<br>{interp['text']}", interp["type"])
-                        
-                        # Anomaly table
-                        with st.expander("View Anomaly Details"):
-                            display_cols = ["mr_date", "consumption", "daily_avg", "predicted", "residual_z", "anomaly_high", "anomaly_low"]
-                            display_cols = [c for c in display_cols if c in anomaly_df.columns]
-                            st.dataframe(anomaly_df[display_cols].reset_index(drop=True))
-                    else:
-                        st.warning("Insufficient data for weather-normalized analysis (need at least 6 billing periods).")
+                        st.markdown("---")
     
     # ─── ADVANCED ANALYSIS TAB ──────────────────────────────────────────────────
     if ami_data:
-        with tabs[tab_index]:
-            tab_index += 1
+        with tabs[tab_idx]:
+            tab_idx += 1
             
             st.header("Advanced Analysis: Complexity Patterns")
             
             st.markdown("""
-            **What is Fractal Analysis?**
+            **Fractal Analysis** uses Detrended Fluctuation Analysis (DFA) to measure the 
+            complexity of energy consumption patterns via the **Hurst Exponent (H)**:
             
-            This analysis uses Detrended Fluctuation Analysis (DFA) to measure the *complexity* of energy consumption patterns.
-            The key metric is the **Hurst Exponent (H)**, which reveals whether usage patterns are:
-            
-            - **Anti-persistent (H < 0.5)**: Variable, unpredictable behavior. High periods tend to be followed by low periods.
-            - **Random (H = 0.5)**: No clear pattern or memory in the data.
-            - **Persistent (H > 0.5)**: Consistent, predictable patterns. Trends tend to continue.
-            
-            *Based on research by Knowles et al. (2017), University of Florida - Energy and Buildings*
+            - **H < 0.45**: Anti-persistent (variable, mean-reverting)
+            - **H ~ 0.5**: Random (no memory)
+            - **H > 0.55**: Persistent (trending, predictable)
             """)
             
-            st.markdown("---")
-            
-            # Run fractal analysis
             analyzer = FractalAnalyzer(ami_data["df"])
             dfa_result = analyzer.detrended_fluctuation_analysis()
-            dist_result = analyzer.distribution_analysis()
             
-            fractal_data = {
-                "dfa": dfa_result,
-                "distribution": dist_result,
-                "values": analyzer.values,
-                "differenced": analyzer.differenced,
-            }
-            
-            # Display results
             if "error" not in dfa_result:
-                col1, col2, col3 = st.columns(3)
+                col1, col2 = st.columns(2)
                 with col1:
                     st.metric("Hurst Exponent", f"{dfa_result['hurst_exponent']:.3f}")
                 with col2:
                     st.metric("R-Squared", f"{dfa_result['r_squared']:.3f}")
-                with col3:
-                    if dfa_result['hurst_exponent'] < 0.45:
-                        pattern = "Anti-Persistent"
-                    elif dfa_result['hurst_exponent'] > 0.55:
-                        pattern = "Persistent"
-                    else:
-                        pattern = "Random/Mixed"
-                    st.metric("Pattern Type", pattern)
-            
-            # DFA chart
-            st.subheader("DFA Scaling Analysis")
-            fig = create_dfa_chart(dfa_result)
-            st.pyplot(fig)
-            plt.close(fig)
-            
-            # Distribution chart
-            st.subheader("Distribution Analysis")
-            fig = create_distribution_chart(analyzer.values, analyzer.differenced)
-            st.pyplot(fig)
-            plt.close(fig)
-            
-            # Statistics
-            col1, col2 = st.columns(2)
-            with col1:
-                st.markdown("**Raw Data Statistics:**")
-                st.markdown(f"- Skewness: {dist_result['raw']['skewness']:.2f}")
-                st.markdown(f"- Kurtosis: {dist_result['raw']['kurtosis']:.2f}")
-                st.markdown(f"- Normal: {'Yes' if dist_result['normality_tests']['raw_is_normal'] else 'No'}")
-            
-            with col2:
-                st.markdown("**Differenced Data Statistics:**")
-                st.markdown(f"- Skewness: {dist_result['differenced']['skewness']:.2f}")
-                st.markdown(f"- Kurtosis: {dist_result['differenced']['kurtosis']:.2f}")
-                st.markdown(f"- Normal: {'Yes' if dist_result['normality_tests']['diff_is_normal'] else 'No'}")
-            
-            # Interpretations
-            st.subheader("Auditor Findings")
-            interpretations = analyzer.get_interpretation(dfa_result, dist_result)
-            for interp in interpretations:
-                info_box(f"**{interp['title']}**<br>{interp['text']}", interp["type"])
+                
+                # DFA chart
+                fig, ax = plt.subplots(figsize=(10, 5))
+                ax.scatter(dfa_result["log_n"], dfa_result["log_F"], 
+                          color="steelblue", s=60, alpha=0.8)
+                x_line = np.linspace(dfa_result["log_n"].min(), dfa_result["log_n"].max(), 100)
+                y_line = dfa_result["slope"] * x_line + dfa_result["intercept"]
+                ax.plot(x_line, y_line, color="crimson", linewidth=2, linestyle="--",
+                       label=f"H = {dfa_result['hurst_exponent']:.3f}")
+                ax.set_xlabel("log(Window Size)")
+                ax.set_ylabel("log(Fluctuation)")
+                ax.set_title("DFA Scaling Plot")
+                ax.legend()
+                ax.grid(True, alpha=0.3)
+                plt.tight_layout()
+                st.pyplot(fig)
+                all_charts.append(fig)
+                
+                # Interpretation
+                st.subheader("Interpretation")
+                for interp in analyzer.get_interpretation(dfa_result):
+                    info_box(f"**{interp['title']}**<br>{interp['text']}", interp["type"])
+            else:
+                st.warning(dfa_result["error"])
     
     # ─── EXPORT TAB ─────────────────────────────────────────────────────────────
-    with tabs[tab_index]:
+    with tabs[tab_idx]:
         st.header("Export Report")
-        
-        st.markdown("""
-        Generate a PDF report to share with clients or include in audit documentation.
-        """)
         
         col1, col2 = st.columns(2)
         
@@ -2162,85 +1364,37 @@ def main():
             st.subheader("Standard Report")
             st.markdown("""
             **Includes:**
-            - Customer information
-            - Consumption history charts
-            - Daily average trends
+            - Consumption charts with event markers
+            - Daily average and rolling trends
             - Temperature correlation analysis
-            - Weather-normalized anomaly detection
-            - Summary statistics
-            
-            **Best for:** Basic audit documentation and client summaries.
+            - Anomaly detection
             """)
             
             if st.button("Generate Standard Report", type="primary"):
-                with st.spinner("Generating report..."):
-                    pdf_buffer = generate_pdf_report(
-                        customer_info=customer_info,
-                        meter_data=meter_data if meter_data else None,
-                        ami_data=ami_data,
-                        temp_data=temp_data,
-                        fractal_data=None,
-                        report_type="standard"
-                    )
-                    
-                    customer_name = customer_info.get("customer_name", "Customer") if customer_info else "Customer"
-                    filename = f"Energy_Audit_{customer_name.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d')}.pdf"
-                    
-                    st.download_button(
-                        label="Download Standard Report",
-                        data=pdf_buffer,
-                        file_name=filename,
-                        mime="application/pdf"
-                    )
+                with st.spinner("Generating..."):
+                    pdf = generate_pdf_report(customer_info, all_charts, "standard")
+                    name = customer_info.get("customer_name", "Customer") if customer_info else "Customer"
+                    filename = f"Energy_Audit_{name.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d')}.pdf"
+                    st.download_button("Download PDF", pdf, filename, "application/pdf")
         
         with col2:
             st.subheader("Advanced Report")
             st.markdown("""
-            **Includes everything in Standard, plus:**
+            **Includes Standard, plus:**
             - Fractal complexity analysis
-            - Hurst exponent calculations
-            - Distribution analysis
-            - Behavior pattern classification
-            - Advanced auditor recommendations
-            
-            **Best for:** Detailed technical analysis and research-quality documentation.
+            - Hurst exponent interpretation
+            - Behavior classification
             """)
             
             if ami_data:
                 if st.button("Generate Advanced Report", type="secondary"):
-                    with st.spinner("Generating report..."):
-                        # Run fractal analysis if not already done
-                        if fractal_data is None:
-                            analyzer = FractalAnalyzer(ami_data["df"])
-                            dfa_result = analyzer.detrended_fluctuation_analysis()
-                            dist_result = analyzer.distribution_analysis()
-                            fractal_data = {
-                                "dfa": dfa_result,
-                                "distribution": dist_result,
-                                "values": analyzer.values,
-                                "differenced": analyzer.differenced,
-                            }
-                        
-                        pdf_buffer = generate_pdf_report(
-                            customer_info=customer_info,
-                            meter_data=meter_data if meter_data else None,
-                            ami_data=ami_data,
-                            temp_data=temp_data,
-                            fractal_data=fractal_data,
-                            report_type="advanced"
-                        )
-                        
-                        customer_name = customer_info.get("customer_name", "Customer") if customer_info else "Customer"
-                        filename = f"Energy_Audit_Advanced_{customer_name.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d')}.pdf"
-                        
-                        st.download_button(
-                            label="Download Advanced Report",
-                            data=pdf_buffer,
-                            file_name=filename,
-                            mime="application/pdf"
-                        )
+                    with st.spinner("Generating..."):
+                        pdf = generate_pdf_report(customer_info, all_charts, "advanced")
+                        name = customer_info.get("customer_name", "Customer") if customer_info else "Customer"
+                        filename = f"Energy_Audit_Advanced_{name.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d')}.pdf"
+                        st.download_button("Download PDF", pdf, filename, "application/pdf")
             else:
-                st.info("Upload AMI data to enable advanced report generation.")
+                st.info("Upload AMI data for advanced report.")
 
 
 if __name__ == "__main__":
