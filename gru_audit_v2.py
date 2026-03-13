@@ -1029,8 +1029,7 @@ def main():
     
     apply_theme()
     
-    st.title("Energy Audit Analyzer")
-    st.markdown("*Professional energy consumption analysis for auditors*")
+    st.title("Utility Consumption Analyzer")
     st.markdown("---")
     
     if meter_file is None and ami_file is None:
@@ -1187,7 +1186,7 @@ def main():
             elif len(all_utilities) >= 2:
                 st.info("Cross-utility correlation requires overlapping date ranges between utilities.")
         
-        st.subheader("Auditor Recommendations")
+        st.subheader("Recommendations")
         
         advice_list = generate_auditor_advice(temp_correlations, cross_corr_pairs, utility_features)
         
