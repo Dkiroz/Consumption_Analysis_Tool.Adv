@@ -62,13 +62,6 @@ streamlit run streamlit_energy_audit.py
 
 Opens at `http://localhost:8501`
 
-### Streamlit Cloud Deployment
-
-1. Push code to GitHub
-2. Go to [share.streamlit.io](https://share.streamlit.io)
-3. Connect your GitHub repo
-4. Deploy
-
 ## File Formats
 
 ### Meter Files (Excel)
