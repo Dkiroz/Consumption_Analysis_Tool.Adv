@@ -816,19 +816,48 @@ def generate_auditor_advice(temp_correlations, cross_correlations, utility_featu
     
     if cross_correlations is not None:
         for (util1, util2), r in cross_correlations.items():
-            if "Water" in util1 or "Water" in util2:
-                other = util1 if util2 == "Water" else util2
-                if r > 0.5 and other == "Electric":
+            # Water-Electric correlation
+            if ("Water" in util1 and "Electric" in util2) or ("Electric" in util1 and "Water" in util2):
+                if r > 0.7:
+                    advice.append({
+                        "type": "danger",
+                        "text": "<b>Very High Water-Electric correlation (r=" + str(round(r, 2)) + "):</b> Strong link between water and electric usage. Possible electric water heater issue or leak. Inspect water heater, check for continuous heating cycles, and verify no hot water leaks."
+                    })
+                elif r > 0.5:
                     advice.append({
                         "type": "info",
                         "text": "<b>High Water-Electric correlation (r=" + str(round(r, 2)) + "):</b> Possible electric water heater or pool pump. Consider water heater efficiency or heat pump water heater upgrade."
                     })
-            if "Gas" in util1 or "Gas" in util2:
-                other = util1 if util2 == "Gas" else util2
-                if r < -0.3 and other == "Electric":
+            
+            # Water-Gas correlation
+            if ("Water" in util1 and "Gas" in util2) or ("Gas" in util1 and "Water" in util2):
+                if r > 0.7:
+                    advice.append({
+                        "type": "danger",
+                        "text": "<b>Very High Water-Gas correlation (r=" + str(round(r, 2)) + "):</b> Strong link between water and natural gas usage. Possible natural gas water heater issue or hot water leak. Inspect water heater for continuous firing, check for hot water leaks at fixtures and pipes."
+                    })
+                elif r > 0.5:
                     advice.append({
                         "type": "info",
-                        "text": "<b>Inverse Gas-Electric correlation (r=" + str(round(r, 2)) + "):</b> Likely switching between natural gas furnace (winter) and AC (summer). Normal seasonal HVAC pattern."
+                        "text": "<b>High Water-Gas correlation (r=" + str(round(r, 2)) + "):</b> Natural gas water heater detected. Consider tankless water heater upgrade or insulating hot water pipes to reduce standby losses."
+                    })
+            
+            # Electric-Gas correlation
+            if ("Electric" in util1 and "Gas" in util2) or ("Gas" in util1 and "Electric" in util2):
+                if r < -0.5:
+                    advice.append({
+                        "type": "success",
+                        "text": "<b>Strong Inverse Electric-Gas correlation (r=" + str(round(r, 2)) + "):</b> Clear seasonal switching between natural gas furnace (winter) and AC (summer). Normal and efficient HVAC pattern."
+                    })
+                elif r < -0.3:
+                    advice.append({
+                        "type": "info",
+                        "text": "<b>Moderate Inverse Electric-Gas correlation (r=" + str(round(r, 2)) + "):</b> Some seasonal switching between natural gas furnace and AC. Typical heating/cooling pattern."
+                    })
+                elif r > 0.5:
+                    advice.append({
+                        "type": "warning",
+                        "text": "<b>High Positive Electric-Gas correlation (r=" + str(round(r, 2)) + "):</b> Unusual - both utilities increase together. Check for inefficient equipment, possible HVAC issues, or supplemental electric heating with gas."
                     })
     
     for util, feats in utility_features.items():
