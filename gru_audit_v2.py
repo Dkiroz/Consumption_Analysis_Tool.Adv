@@ -725,18 +725,34 @@ def plot_temp_scatter(df, value_col, unit, title, utility_type="Electric"):
 
 
 # Cross-Utility Correlation
-def compute_cross_utility_correlation(utility_data):
+def compute_cross_utility_correlation(ami_data, meter_data):
     daily_dfs = {}
+    units = {}
     
-    for util_name, data in utility_data.items():
+    # Get daily series from AMI data
+    for util_name, data in ami_data.items():
         if "features" in data and "daily_series" in data["features"]:
             ds = data["features"]["daily_series"].reset_index()
             ds.columns = ["date", util_name]
             ds["date"] = pd.to_datetime(ds["date"])
             daily_dfs[util_name] = ds
+            units[util_name] = data.get("unit", "")
+    
+    # Get daily averages from meter data (if not already in AMI)
+    for util_name, data in meter_data.items():
+        if util_name not in daily_dfs:
+            df = data["df"].copy()
+            if "avg_daily" in df.columns and "mr_date" in df.columns:
+                # Use avg_daily for each billing period
+                df = df[df["consumption"] > 0].copy()
+                ds = df[["mr_date", "avg_daily"]].copy()
+                ds.columns = ["date", util_name]
+                ds["date"] = pd.to_datetime(ds["date"])
+                daily_dfs[util_name] = ds
+                units[util_name] = data["features"].get("unit", "")
     
     if len(daily_dfs) < 2:
-        return None, None
+        return None, None, None
     
     merged = None
     for util_name, df in daily_dfs.items():
@@ -746,12 +762,12 @@ def compute_cross_utility_correlation(utility_data):
             merged = merged.merge(df, on="date", how="inner")
     
     if merged is None or len(merged) < 5:
-        return None, None
+        return None, None, None
     
     util_cols = [c for c in merged.columns if c != "date"]
     corr_matrix = merged[util_cols].corr()
     
-    return merged, corr_matrix
+    return merged, corr_matrix, units
 
 
 def plot_cross_utility_scatter(merged_df, util1, util2, unit1, unit2):
@@ -1144,29 +1160,32 @@ def main():
                 
                 st.markdown("---")
         
-        if len(all_utilities) >= 2 and ami_data:
+        if len(all_utilities) >= 2:
             st.subheader("Cross-Utility Correlation")
             
-            merged_cross, corr_matrix = compute_cross_utility_correlation(ami_data)
+            merged_cross, corr_matrix, corr_units = compute_cross_utility_correlation(ami_data, meter_data)
             
-            if merged_cross is not None:
-                st.markdown("**Correlation Matrix (Daily Totals)**")
+            if merged_cross is not None and corr_matrix is not None:
+                st.markdown("**Correlation Matrix**")
                 st.dataframe(corr_matrix.round(2))
                 
-                util_list = list(ami_data.keys())
+                util_list = [c for c in merged_cross.columns if c != "date"]
                 for i in range(len(util_list)):
                     for j in range(i + 1, len(util_list)):
                         u1, u2 = util_list[i], util_list[j]
                         if u1 in merged_cross.columns and u2 in merged_cross.columns:
+                            unit1 = corr_units.get(u1, "")
+                            unit2 = corr_units.get(u2, "")
                             fig, r = plot_cross_utility_scatter(
-                                merged_cross, u1, u2,
-                                ami_data[u1]["unit"], ami_data[u2]["unit"]
+                                merged_cross, u1, u2, unit1, unit2
                             )
                             st.pyplot(fig)
                             all_charts.append(fig)
                             cross_corr_pairs[(u1, u2)] = r
                 
                 st.markdown("---")
+            elif len(all_utilities) >= 2:
+                st.info("Cross-utility correlation requires overlapping date ranges between utilities.")
         
         st.subheader("Auditor Recommendations")
         
