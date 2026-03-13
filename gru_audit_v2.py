@@ -1,4 +1,4 @@
-“””
+'''
 Energy Audit Analyzer v3.0
 Professional energy consumption analysis tool for auditors.
 
@@ -14,7 +14,7 @@ Features:
 - PDF report export
 
 Author: Energy Audit Tools
-“””
+'''
 
 import streamlit as st
 import pandas as pd
