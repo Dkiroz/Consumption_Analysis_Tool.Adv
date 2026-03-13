@@ -1,6 +1,6 @@
 # Energy Audit Analyzer v3.0
 
-Professional energy consumption analysis tool for energy auditors. Analyzes meter billing data and AMI interval data to identify patterns, correlations, and actionable recommendations.
+An energy consumption analysis tool for energy auditors. Analyzes meter billing data and AMI interval data to identify patterns, correlations, and actionable recommendations.
 
 ## Features
 
