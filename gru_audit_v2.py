@@ -19,7 +19,7 @@ warnings.filterwarnings("ignore")
 
 # Page config
 st.set_page_config(
-    page_title="Energy Audit Analyzer",
+    page_title="Utility Consumption Analysis",
     page_icon="E",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -1023,8 +1023,8 @@ class FractalAnalyzer:
         return slope, r_value ** 2
 
 
-# PDF Report
-def generate_pdf_report(customer_info, charts, advice_list):
+# PDF Report - Simple customer-facing export
+def generate_pdf_report(customer_info, consumption_charts, temp_charts):
     buffer = io.BytesIO()
     
     plt.rcParams.update({
@@ -1037,39 +1037,30 @@ def generate_pdf_report(customer_info, charts, advice_list):
     })
     
     with PdfPages(buffer) as pdf:
+        # Title page with customer info
         fig, ax = plt.subplots(figsize=(11, 8.5))
         ax.axis("off")
         
-        ax.text(0.5, 0.8, "Energy Audit Report", fontsize=28, fontweight="bold", ha="center", color="#1e3a5f")
+        ax.text(0.5, 0.75, "Utility Consumption Report", fontsize=28, fontweight="bold", ha="center", color="#1e3a5f")
         
         if customer_info:
-            ax.text(0.5, 0.55, "Customer: " + str(customer_info.get("customer_name", "N/A")), fontsize=14, ha="center")
-            ax.text(0.5, 0.50, "Account: " + str(customer_info.get("account", "N/A")), fontsize=12, ha="center")
-            ax.text(0.5, 0.45, "Address: " + str(customer_info.get("address", "N/A")), fontsize=12, ha="center")
+            ax.text(0.5, 0.55, str(customer_info.get("customer_name", "")), fontsize=18, ha="center")
+            ax.text(0.5, 0.48, str(customer_info.get("address", "")), fontsize=14, ha="center")
+            ax.text(0.5, 0.42, "Account: " + str(customer_info.get("account", "")), fontsize=12, ha="center", color="gray")
         
-        ax.text(0.5, 0.25, "Generated: " + datetime.now().strftime("%Y-%m-%d %H:%M"), fontsize=10, ha="center", color="gray")
+        ax.text(0.5, 0.20, datetime.now().strftime("%B %d, %Y"), fontsize=12, ha="center", color="gray")
         
         pdf.savefig(fig, bbox_inches="tight")
         plt.close(fig)
         
-        if advice_list:
-            fig, ax = plt.subplots(figsize=(11, 8.5))
-            ax.axis("off")
-            ax.text(0.5, 0.95, "Auditor Recommendations", fontsize=18, fontweight="bold", ha="center", color="#1e3a5f")
-            
-            y = 0.88
-            for adv in advice_list:
-                text = adv["text"].replace("<b>", "").replace("</b>", "")
-                wrapped = "\n".join([text[i:i+90] for i in range(0, len(text), 90)])
-                ax.text(0.05, y, wrapped, fontsize=9, va="top", wrap=True)
-                y -= 0.12
-                if y < 0.1:
-                    break
-            
-            pdf.savefig(fig, bbox_inches="tight")
-            plt.close(fig)
+        # Consumption charts
+        for chart in consumption_charts:
+            if chart is not None:
+                pdf.savefig(chart, bbox_inches="tight")
+                plt.close(chart)
         
-        for chart in charts:
+        # Temperature overlay charts
+        for chart in temp_charts:
             if chart is not None:
                 pdf.savefig(chart, bbox_inches="tight")
                 plt.close(chart)
@@ -1096,8 +1087,7 @@ def main():
     
     apply_theme()
     
-    st.title("Energy Audit Analyzer")
-    st.markdown("*Professional energy consumption analysis for auditors*")
+    st.title("Utility Consumption Analysis")
     st.markdown("---")
     
     if meter_file is None and ami_file is None:
@@ -1108,7 +1098,8 @@ def main():
     meter_data = {}
     ami_data = {}
     df_temp = None
-    all_charts = []
+    consumption_charts = []
+    temp_overlay_charts = []
     temp_correlations = {}
     cross_corr_pairs = {}
     utility_features = {}
@@ -1205,14 +1196,13 @@ def main():
                     if not merged.empty:
                         fig = plot_temp_overlay_ami(merged, util + " Daily Usage vs Temperature", data["unit"])
                         st.pyplot(fig)
-                        all_charts.append(fig)
+                        temp_overlay_charts.append(fig)
                         
                         r, corr_type = compute_temp_correlation(merged, "value", utility_type=util)
                         temp_correlations[util] = (r, corr_type)
                         
                         fig2, r2 = plot_temp_scatter(merged, "value", data["unit"], util + " Temperature Correlation", util)
                         st.pyplot(fig2)
-                        all_charts.append(fig2)
                 
                 elif util in meter_data:
                     data = meter_data[util]
@@ -1221,7 +1211,7 @@ def main():
                         # Daily average with temperature overlay
                         fig = plot_meter_daily_avg_temp_overlay(merged, util + " Daily Avg Usage vs Temperature", data["features"]["unit"])
                         st.pyplot(fig)
-                        all_charts.append(fig)
+                        temp_overlay_charts.append(fig)
                         
                         # Calculate correlation using daily average
                         if "avg_daily" in merged.columns:
@@ -1235,7 +1225,6 @@ def main():
                         value_col = "avg_daily" if "avg_daily" in merged.columns else "calc_daily"
                         fig2, r2 = plot_temp_scatter(merged, value_col, data["features"]["unit"] + "/day", util + " Temperature Correlation", util)
                         st.pyplot(fig2)
-                        all_charts.append(fig2)
                 
                 st.markdown("---")
         
@@ -1259,7 +1248,6 @@ def main():
                                 merged_cross, u1, u2, unit1, unit2
                             )
                             st.pyplot(fig)
-                            all_charts.append(fig)
                             cross_corr_pairs[(u1, u2)] = r
                 
                 st.markdown("---")
@@ -1309,7 +1297,7 @@ def main():
                 fig.autofmt_xdate()
                 plt.tight_layout()
                 st.pyplot(fig)
-                all_charts.append(fig)
+                consumption_charts.append(fig)
                 
                 col1, col2 = st.columns(2)
                 
@@ -1323,7 +1311,7 @@ def main():
                     fig.autofmt_xdate()
                     plt.tight_layout()
                     st.pyplot(fig)
-                    all_charts.append(fig)
+                    consumption_charts.append(fig)
                 
                 with col2:
                     st.subheader("Hourly Profile")
@@ -1337,7 +1325,6 @@ def main():
                     ax.set_xticks(range(0, 24, 2))
                     plt.tight_layout()
                     st.pyplot(fig)
-                    all_charts.append(fig)
             
             elif util in meter_data:
                 data = meter_data[util]
@@ -1361,23 +1348,21 @@ def main():
                 fig = graphs.plot_daily_average()
                 if fig is not None:
                     st.pyplot(fig)
-                    all_charts.append(fig)
+                    consumption_charts.append(fig)
                 
                 # Consumption chart
                 fig = graphs.plot_consumption()
                 st.pyplot(fig)
-                all_charts.append(fig)
+                consumption_charts.append(fig)
                 
                 col1, col2 = st.columns(2)
                 with col1:
                     fig = graphs.plot_rolling_average()
                     st.pyplot(fig)
-                    all_charts.append(fig)
                 
                 with col2:
                     fig = graphs.plot_anomalies()
                     st.pyplot(fig)
-                    all_charts.append(fig)
     
     # Advanced Analysis Tab
     if ami_data:
@@ -1421,19 +1406,13 @@ def main():
     with tabs[export_tab_idx]:
         st.header("Export Report")
         
-        st.markdown("""
-        Generate a PDF report including:
-        - Temperature correlation analysis
-        - Cross-utility correlations
-        - Auditor recommendations
-        - All utility charts
-        """)
+        st.markdown("Generate a customer-facing PDF report with consumption graphs and temperature overlay.")
         
         if st.button("Generate PDF Report", type="primary"):
             with st.spinner("Generating report..."):
-                pdf = generate_pdf_report(customer_info, all_charts, advice_list if "advice_list" in dir() else [])
+                pdf = generate_pdf_report(customer_info, consumption_charts, temp_overlay_charts)
                 name = customer_info.get("customer_name", "Customer") if customer_info else "Customer"
-                filename = "Energy_Audit_" + str(name).replace(" ", "_") + "_" + datetime.now().strftime("%Y%m%d") + ".pdf"
+                filename = "Consumption_Report_" + str(name).replace(" ", "_") + "_" + datetime.now().strftime("%Y%m%d") + ".pdf"
                 
                 st.download_button(
                     label="Download PDF",
